@@ -34,6 +34,19 @@ func (e *Encoder) Encode(data []fr.Element) ([]fr.Element, error) {
 	return paddedData, nil
 }
 
+// K x K matrix => K x N matrix
+func (e *Encoder) EncodeRowWise(data [][]fr.Element) ([][]fr.Element, error) {
+	encoded := make([][]fr.Element, len(data))
+	for i, row := range data {
+		encRow, err := e.Encode(row)
+		if err != nil {
+			return nil, err
+		}
+		encoded[i] = encRow
+	}
+	return encoded, nil
+}
+
 // Note: This function is not used in the current implementation.
 func (e *Encoder) EncodeInCircuit(data []frontend.Variable) ([]frontend.Variable, error) {
 	if len(data) > e.k {

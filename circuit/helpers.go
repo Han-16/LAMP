@@ -38,7 +38,7 @@ func VerifyColumnMerkleProof(
 	api.AssertIsEqual(hashed, root)
 }
 
-func DynamicSelect(api frontend.API, array []frontend.Variable, indexBits []frontend.Variable) frontend.Variable {
+func SelectTargetIndex(api frontend.API, array []frontend.Variable, indexBits []frontend.Variable) frontend.Variable {
 	currentLayer := array
 
 	for d := 0; d < len(indexBits); d++ {
