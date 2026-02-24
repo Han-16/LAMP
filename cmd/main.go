@@ -1,15 +1,15 @@
 package main
 
 import (
+	"encoding/binary"
 	"flag"
 	"fmt"
 	"log"
-	"math/big"
+	"time"
 
 	"github.com/Han-16/meow/circuit"
-	"github.com/Han-16/meow/merkle"
 	"github.com/Han-16/meow/rs"
-
+	"github.com/Han-16/meow/utils"
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr/mimc"
@@ -19,268 +19,404 @@ import (
 )
 
 func main() {
-	// 1. 파라미터 설정 (K, N, L)
-	kPtr := flag.Int("k", 8, "Matrix size KxK")
-	nPtr := flag.Int("n", 16, "Encoded size N")
-	lPtr := flag.Int("l", 4, "Number of query indices L")
+	// Command-line flags
+	kLogPtr := flag.Int("k", 4, "Log2 of matrix size K (e.g., 10 means K=1024)")
+	nLogPtr := flag.Int("n", 8, "Log2 of encoded size N (e.g., 11 means N=2048)")
+	lPtr := flag.Int("l", 2, "Number of queries L (actual value)")
+	circuitPtr := flag.String("circuit", "meow", "Circuit to run: 'meow' or 'freivalds'")
+
+	compileOnlyPtr := flag.Bool("compileOnly", false, "If true, only compiles the circuit to check constraints")
 	flag.Parse()
 
-	K, N, L := *kPtr, *nPtr, *lPtr
-	fmt.Printf("[1] 파라미터 설정: K=%d, N=%d, L=%d\n", K, N, L)
+	// K, N <- 2^kLogPtr, 2^nLogPtr
+	K := 1 << *kLogPtr
+	N := 1 << *nLogPtr
+	L := *lPtr
+	circuitName := *circuitPtr
+	compileOnly := *compileOnlyPtr
 
-	// 2. K x K 행렬 A, B 생성 및 C = A * B 계산
-	matrixA := make([][]fr.Element, K)
-	matrixB := make([][]fr.Element, K)
-	matrixC := make([][]fr.Element, K)
-	for i := 0; i < K; i++ {
-		matrixA[i] = make([]fr.Element, K)
-		matrixB[i] = make([]fr.Element, K)
-		matrixC[i] = make([]fr.Element, K)
-		for j := 0; j < K; j++ {
-			matrixA[i][j].SetRandom()
-			matrixB[i][j].SetRandom()
-		}
-	}
+	Depth := *nLogPtr
 
-	for i := 0; i < K; i++ {
-		for j := 0; j < K; j++ {
-			for l := 0; l < K; l++ {
-				var tmp fr.Element
-				tmp.Mul(&matrixA[i][l], &matrixB[l][j])
-				matrixC[i][j].Add(&matrixC[i][j], &tmp)
-			}
-		}
-	}
-	fmt.Println("[2] 행렬 연산 완료 (C = A * B)")
+	fmt.Printf("===================================================\n")
+	fmt.Printf("1. Parameters: Circuit=%s, K=%d (2^%d), N=%d (2^%d), L=%d, Depth=%d, CompileOnly=%t\n",
+		circuitName, K, *kLogPtr, N, *nLogPtr, L, Depth, compileOnly)
+	fmt.Printf("===================================================\n")
 
-	// 3. RS Encoder를 통해 K x N으로 인코딩
-	encoder := rs.NewEncoder(K, N)
-	encA, _ := encoder.EncodeRowWise(matrixA)
-	encB, _ := encoder.EncodeRowWise(matrixB)
-	encC, _ := encoder.EncodeRowWise(matrixC)
-	fmt.Println("[3] Reed-Solomon 인코딩 완료")
-
-	// 4. 머클 커밋 함수 (Column-wise)
-	commitMatrix := func(mat [][]fr.Element) (root []byte, data []byte, segSize int) {
-		// N개의 열(Column)을 리프로 만듦 (각 리프는 K개의 원소를 가짐)
-		cols := make([][]*big.Int, N)
-		for j := 0; j < N; j++ {
-			cols[j] = make([]*big.Int, len(mat))
-			for i := 0; i < len(mat); i++ {
-				cols[j][i] = new(big.Int)
-				mat[i][j].BigInt(cols[j][i])
-			}
-		}
-		var err error
-		root, data, segSize, _, err = merkle.CommitMatrix(cols)
-		if err != nil {
-			log.Fatal(err)
+	// --------------------------------------------------------------------------------
+	// CompileOnly mode: Only compile the circuit and print the number of constraints, without generating matrices or proving.
+	// --------------------------------------------------------------------------------
+	if compileOnly {
+		fmt.Println(">> [CompileOnly Mode] Skipping off-chain matrix generation and proving.")
+		switch circuitName {
+		case "freivalds":
+			compileFreivaldsOnly(K)
+		case "meow":
+			compileMeowOnly(K, N, L, Depth)
+		default:
+			log.Fatalf("❌ Unknown circuit: %s. Please use '-circuit=meow' or '-circuit=freivalds'", circuitName)
 		}
 		return
 	}
 
-	rootA, dataA, segA := commitMatrix(encA)
-	rootB, dataB, segB := commitMatrix(encB)
-	rootC, dataC, segC := commitMatrix(encC)
-	fmt.Println("[4] 행렬 A, B, C 머클 커밋 완료")
+	// --------------------------------------------------------------------------------
+	// Default mode: Full execution (matrix generation, proving, verification)
+	// --------------------------------------------------------------------------------
+	fmt.Println("2. Generating random matrices and computing C = A * B...")
+	start := time.Now()
+	A := make([][]fr.Element, K)
+	B := make([][]fr.Element, K)
+	for i := 0; i < K; i++ {
+		A[i] = make([]fr.Element, K)
+		B[i] = make([]fr.Element, K)
+		for j := 0; j < K; j++ {
+			_, _ = A[i][j].SetRandom()
+			_, _ = B[i][j].SetRandom()
+		}
+	}
 
-	// 5. CmABC 생성 (H(rootA || rootB || rootC))
-	hFunc := mimc.NewMiMC()
-	hFunc.Write(rootA)
-	hFunc.Write(rootB)
-	hFunc.Write(rootC)
-	cmABC := hFunc.Sum(nil)
-	fmt.Printf("[5] CmABC 생성: %x\n", cmABC)
+	C := utils.MatMul(A, B, K)
+	fmt.Printf("   -> Matrix multiplication took %v\n", time.Since(start))
+	fmt.Printf("---------------------------------------------------\n")
 
-	// 6. ChallengeR 생성 (r, r^2, ..., r^K)
-	var r fr.Element
-	r.SetBytes(cmABC)
+	switch circuitName {
+	case "freivalds":
+		runFreivalds(K, A, B, C)
+	case "meow":
+		runMeow(K, N, L, Depth, A, B, C)
+	default:
+		log.Fatalf("❌ Unknown circuit: %s. Please use '-circuit=meow' or '-circuit=freivalds'", circuitName)
+	}
+}
+
+// ==============================================================================
+// CompileOnly - Freivalds
+// ==============================================================================
+func compileFreivaldsOnly(K int) {
+	fmt.Println("-> Compiling Freivalds Circuit...")
+	start := time.Now()
+	emptyCircuit := circuit.FreivaldsCircuit{
+		K: K,
+		A: make([][]frontend.Variable, K),
+		B: make([][]frontend.Variable, K),
+		C: make([][]frontend.Variable, K),
+	}
+	for i := 0; i < K; i++ {
+		emptyCircuit.A[i] = make([]frontend.Variable, K)
+		emptyCircuit.B[i] = make([]frontend.Variable, K)
+		emptyCircuit.C[i] = make([]frontend.Variable, K)
+	}
+
+	ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &emptyCircuit)
+	if err != nil {
+		log.Fatalf("❌ Compilation failed: %v", err)
+	}
+	fmt.Printf("✅ Freivalds Circuit compiled successfully!\n")
+	fmt.Printf("📊 Constraints: %d (took %v)\n", ccs.GetNbConstraints(), time.Since(start))
+}
+
+// ==============================================================================
+// CompileOnly - Meow
+// ==============================================================================
+func compileMeowOnly(K, N, L, Depth int) {
+	fmt.Println("-> Compiling Meow Circuit...")
+	start := time.Now()
+	emptyCircuit := circuit.MeowCircuit{
+		K: K, N: N,
+		ChallengeR: make([]frontend.Variable, K), Indices: make([]frontend.Variable, L),
+		VecX: make([]frontend.Variable, K), VecY: make([]frontend.Variable, K), VecZ: make([]frontend.Variable, K),
+		ColsEncA: make([][]frontend.Variable, L), ColsEncB: make([][]frontend.Variable, L), ColsEncC: make([][]frontend.Variable, L),
+		MerkleProofsA: make([][]frontend.Variable, L), MerkleProofsB: make([][]frontend.Variable, L), MerkleProofsC: make([][]frontend.Variable, L),
+		MerkleProofsX: make([][]frontend.Variable, L), MerkleProofsY: make([][]frontend.Variable, L), MerkleProofsZ: make([][]frontend.Variable, L),
+	}
+	for i := 0; i < L; i++ {
+		emptyCircuit.ColsEncA[i] = make([]frontend.Variable, K)
+		emptyCircuit.ColsEncB[i] = make([]frontend.Variable, K)
+		emptyCircuit.ColsEncC[i] = make([]frontend.Variable, K)
+		emptyCircuit.MerkleProofsA[i] = make([]frontend.Variable, Depth)
+		emptyCircuit.MerkleProofsB[i] = make([]frontend.Variable, Depth)
+		emptyCircuit.MerkleProofsC[i] = make([]frontend.Variable, Depth)
+		emptyCircuit.MerkleProofsX[i] = make([]frontend.Variable, Depth)
+		emptyCircuit.MerkleProofsY[i] = make([]frontend.Variable, Depth)
+		emptyCircuit.MerkleProofsZ[i] = make([]frontend.Variable, Depth)
+	}
+
+	ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &emptyCircuit)
+	if err != nil {
+		log.Fatalf("❌ Compilation failed: %v", err)
+	}
+	fmt.Printf("✅ Meow Circuit compiled successfully!\n")
+	fmt.Printf("📊 Constraints: %d (took %v)\n", ccs.GetNbConstraints(), time.Since(start))
+}
+
+// ==============================================================================
+// Freivalds Circuit
+// ==============================================================================
+func runFreivalds(K int, A, B, C [][]fr.Element) {
+	fmt.Println("3. [Freivalds] Preparing Assignment Witness...")
+	start := time.Now()
+
+	assignment := circuit.FreivaldsCircuit{
+		K: K,
+		A: make([][]frontend.Variable, K),
+		B: make([][]frontend.Variable, K),
+		C: make([][]frontend.Variable, K),
+	}
+	emptyCircuit := circuit.FreivaldsCircuit{
+		K: K,
+		A: make([][]frontend.Variable, K),
+		B: make([][]frontend.Variable, K),
+		C: make([][]frontend.Variable, K),
+	}
+
+	for i := 0; i < K; i++ {
+		assignment.A[i] = make([]frontend.Variable, K)
+		assignment.B[i] = make([]frontend.Variable, K)
+		assignment.C[i] = make([]frontend.Variable, K)
+
+		emptyCircuit.A[i] = make([]frontend.Variable, K)
+		emptyCircuit.B[i] = make([]frontend.Variable, K)
+		emptyCircuit.C[i] = make([]frontend.Variable, K)
+
+		for j := 0; j < K; j++ {
+			assignment.A[i][j] = A[i][j]
+			assignment.B[i][j] = B[i][j]
+			assignment.C[i][j] = C[i][j]
+		}
+	}
+	fmt.Printf("   -> Assignment preparation took %v\n", time.Since(start))
+
+	fmt.Println("4. [Freivalds] Compiling Circuit...")
+	start = time.Now()
+	ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &emptyCircuit)
+	if err != nil {
+		log.Fatalf("❌ Compilation failed: %v", err)
+	}
+	fmt.Printf("   -> Circuit compiled! Constraints: %d (took %v)\n", ccs.GetNbConstraints(), time.Since(start))
+
+	fmt.Println("5. [Freivalds] Setting up Groth16...")
+	pk, vk, err := groth16.Setup(ccs)
+	if err != nil {
+		log.Fatalf("❌ Setup failed: %v", err)
+	}
+
+	fmt.Println("6. [Freivalds] Generating Witness & Proving...")
+	witness, err := frontend.NewWitness(&assignment, ecc.BN254.ScalarField())
+	if err != nil {
+		log.Fatalf("❌ Witness generation failed: %v", err)
+	}
+	publicWitness, err := witness.Public()
+	if err != nil {
+		log.Fatalf("❌ Public witness extraction failed: %v", err)
+	}
+
+	proof, err := groth16.Prove(ccs, pk, witness)
+	if err != nil {
+		log.Fatalf("❌ Proving failed: %v", err)
+	}
+
+	fmt.Println("7. [Freivalds] Verifying...")
+	err = groth16.Verify(proof, vk, publicWitness)
+	if err != nil {
+		log.Fatalf("❌ Verification failed: %v", err)
+	}
+	fmt.Println("🎉 [Freivalds] Proof successfully generated and verified!")
+}
+
+// ==============================================================================
+// Meow Circuit
+// ==============================================================================
+func runMeow(K, N, L, Depth int, A, B, C [][]fr.Element) {
+	fmt.Println("3. [Meow] Encoding matrices K x K -> K x N...")
+	start := time.Now()
+	encoder := rs.NewEncoder(K, N)
+	encA, _ := encoder.EncodeRowWise(A)
+	encB, _ := encoder.EncodeRowWise(B)
+	encC, _ := encoder.EncodeRowWise(C)
+	fmt.Printf("   -> Encoding took %v\n", time.Since(start))
+
+	fmt.Println("4. [Meow] Building Merkle Trees for A, B, C...")
+	start = time.Now()
+	leavesA, leavesB, leavesC := make([]fr.Element, N), make([]fr.Element, N), make([]fr.Element, N)
+	for j := 0; j < N; j++ {
+		colA, colB, colC := make([]fr.Element, K), make([]fr.Element, K), make([]fr.Element, K)
+		for i := 0; i < K; i++ {
+			colA[i], colB[i], colC[i] = encA[i][j], encB[i][j], encC[i][j]
+		}
+		leavesA[j] = utils.HashElements(colA...)
+		leavesB[j] = utils.HashElements(colB...)
+		leavesC[j] = utils.HashElements(colC...)
+	}
+
+	treeA, cm_A := utils.BuildMerkleTree(leavesA, Depth)
+	treeB, cm_B := utils.BuildMerkleTree(leavesB, Depth)
+	treeC, cm_C := utils.BuildMerkleTree(leavesC, Depth)
+	fmt.Printf("   -> Merkle tree construction took %v\n", time.Since(start))
+
+	fmt.Println("5. [Meow] Generating cmABC and ChallengeR...")
+	start = time.Now()
+	cmABC := utils.HashElements(cm_A, cm_B, cm_C)
+	r := utils.HashElements(cmABC)
 	challengeR := make([]fr.Element, K)
-	challengeR[0].SetOne()
+	challengeR[0].SetUint64(1)
 	for i := 1; i < K; i++ {
 		challengeR[i].Mul(&challengeR[i-1], &r)
 	}
+	fmt.Printf("   -> ChallengeR generation took %v\n", time.Since(start))
 
-	// 7. 벡터 연산: x = r*A, y = x*B, z = r*C
-	vecX := make([]fr.Element, K)
-	vecY := make([]fr.Element, K)
-	vecZ := make([]fr.Element, K)
+	fmt.Println("6. [Meow] Performing vector operations & encoding...")
+	start = time.Now()
+	x := utils.VecMatMul(challengeR, A, K)
+	y := utils.VecMatMul(x, B, K)
+	z := utils.VecMatMul(challengeR, C, K)
 
-	for j := 0; j < K; j++ {
-		for i := 0; i < K; i++ {
-			var tmpX, tmpZ fr.Element
-			tmpX.Mul(&challengeR[i], &matrixA[i][j])
-			vecX[j].Add(&vecX[j], &tmpX)
-			tmpZ.Mul(&challengeR[i], &matrixC[i][j])
-			vecZ[j].Add(&vecZ[j], &tmpZ)
+	encX, _ := encoder.Encode(x)
+	encY, _ := encoder.Encode(y)
+	encZ, _ := encoder.Encode(z)
+	fmt.Printf("   -> Vector ops & encoding took %v\n", time.Since(start))
+
+	fmt.Println("7. [Meow] Building Merkle Trees for vectors...")
+	start = time.Now()
+	leavesX, leavesY, leavesZ := make([]fr.Element, N), make([]fr.Element, N), make([]fr.Element, N)
+	for i := 0; i < N; i++ {
+		leavesX[i] = utils.HashElements(encX[i])
+		leavesY[i] = utils.HashElements(encY[i])
+		leavesZ[i] = utils.HashElements(encZ[i])
+	}
+
+	treeX, cm_x := utils.BuildMerkleTree(leavesX, Depth)
+	treeY, cm_y := utils.BuildMerkleTree(leavesY, Depth)
+	treeZ, cm_z := utils.BuildMerkleTree(leavesZ, Depth)
+	fmt.Printf("   -> Merkle trees for vectors took %v\n", time.Since(start))
+
+	fmt.Println("8. [Meow] Extracting indices using Fiat-Shamir heuristic...")
+	start = time.Now()
+	cmXYZ := utils.HashElements(cm_x, cm_y, cm_z)
+	indices := make([]int, 0, L)
+	used := make(map[int]bool)
+	h := mimc.NewMiMC()
+	cmBytes := cmXYZ.Bytes()
+	hashBytes := cmBytes[:]
+
+	for len(indices) < L {
+		h.Reset()
+		h.Write(hashBytes)
+		hashBytes = h.Sum(nil)
+		for i := 0; i < 32 && len(indices) < L; i += 8 {
+			val := binary.BigEndian.Uint64(hashBytes[i : i+8])
+			idx := int(val % uint64(N))
+			if !used[idx] {
+				used[idx] = true
+				indices = append(indices, idx)
+			}
 		}
 	}
-	for j := 0; j < K; j++ {
-		for i := 0; i < K; i++ {
-			var tmpY fr.Element
-			tmpY.Mul(&vecX[i], &matrixB[i][j])
-			vecY[j].Add(&vecY[j], &tmpY)
-		}
-	}
-	fmt.Println("[7] 벡터 x, y, z 연산 완료")
+	fmt.Printf("   -> Index extraction took %v\n", time.Since(start))
 
-	// 8. 벡터 x, y, z 인코딩 및 머클 커밋
-	encX, _ := encoder.Encode(vecX)
-	encY, _ := encoder.Encode(vecY)
-	encZ, _ := encoder.Encode(vecZ)
-
-	// 벡터용 머클 커밋 (각 리프는 1개의 원소를 가짐)
-	commitVec := func(vec []fr.Element) (root []byte, data []byte, segSize int) {
-		cols := make([][]*big.Int, N)
-		for j := 0; j < N; j++ {
-			cols[j] = []*big.Int{new(big.Int)}
-			vec[j].BigInt(cols[j][0])
-		}
-		root, data, segSize, _, _ = merkle.CommitMatrix(cols)
-		return
-	}
-
-	rootX, dataX, segX := commitVec(encX)
-	rootY, dataY, segY := commitVec(encY)
-	rootZ, dataZ, segZ := commitVec(encZ)
-
-	// 9. cmXYZ 생성 및 인덱스 셋 I 추출
-	hFunc.Reset()
-	hFunc.Write(rootX)
-	hFunc.Write(rootY)
-	hFunc.Write(rootZ)
-	cmXYZ := hFunc.Sum(nil)
-
-	indices := make([]uint64, L)
-	for i := 0; i < L; i++ {
-		hFunc.Reset()
-		hFunc.Write(cmXYZ)
-		hFunc.Write([]byte{byte(i)})
-		indices[i] = new(big.Int).SetBytes(hFunc.Sum(nil)).Uint64() % uint64(N)
-	}
-	fmt.Printf("[9] 쿼리 인덱스 추출: %v\n", indices)
-
-	// 10. Merkle Proof 생성
-	proofsA, _ := merkle.GenerateProofs(dataA, segA, indices)
-	proofsB, _ := merkle.GenerateProofs(dataB, segB, indices)
-	proofsC, _ := merkle.GenerateProofs(dataC, segC, indices)
-	proofsX, _ := merkle.GenerateProofs(dataX, segX, indices)
-	proofsY, _ := merkle.GenerateProofs(dataY, segY, indices)
-	proofsZ, _ := merkle.GenerateProofs(dataZ, segZ, indices)
-
-	// 11. 증명 생성 준비 (Assignment)
+	fmt.Println("9. [Meow] Preparing Assignment Witness...")
+	start = time.Now()
 	assignment := circuit.MeowCircuit{
 		K: K, N: N,
-		CmABC:      cmABC,
-		CmXYZ:      cmXYZ,
-		ChallengeR: make([]frontend.Variable, K),
-		Indices:    make([]frontend.Variable, L),
-		VecX:       make([]frontend.Variable, K),
-		VecY:       make([]frontend.Variable, K),
-		VecZ:       make([]frontend.Variable, K),
+		CmABC: cmABC, CmXYZ: cmXYZ,
+		Roots:         [6]frontend.Variable{cm_A, cm_B, cm_C, cm_x, cm_y, cm_z},
+		ChallengeR:    make([]frontend.Variable, K),
+		Indices:       make([]frontend.Variable, L),
+		VecX:          make([]frontend.Variable, K),
+		VecY:          make([]frontend.Variable, K),
+		VecZ:          make([]frontend.Variable, K),
+		ColsEncA:      make([][]frontend.Variable, L),
+		ColsEncB:      make([][]frontend.Variable, L),
+		ColsEncC:      make([][]frontend.Variable, L),
+		MerkleProofsA: make([][]frontend.Variable, L), MerkleProofsB: make([][]frontend.Variable, L), MerkleProofsC: make([][]frontend.Variable, L),
+		MerkleProofsX: make([][]frontend.Variable, L), MerkleProofsY: make([][]frontend.Variable, L), MerkleProofsZ: make([][]frontend.Variable, L),
 	}
 
-	// Public Roots 설정
-	roots := [][]byte{rootA, rootB, rootC, rootX, rootY, rootZ}
-	for i := 0; i < 6; i++ {
-		assignment.Roots[i] = roots[i]
-	}
-
-	// Challenge 및 원본 벡터 설정
 	for i := 0; i < K; i++ {
 		assignment.ChallengeR[i] = challengeR[i]
-		assignment.VecX[i] = vecX[i]
-		assignment.VecY[i] = vecY[i]
-		assignment.VecZ[i] = vecZ[i]
+		assignment.VecX[i], assignment.VecY[i], assignment.VecZ[i] = x[i], y[i], z[i]
 	}
 
-	// 슬라이스 초기화
-	assignment.ColsEncA = make([][]frontend.Variable, L)
-	assignment.ColsEncB = make([][]frontend.Variable, L)
-	assignment.ColsEncC = make([][]frontend.Variable, L)
-	assignment.MerkleProofsA = make([][]frontend.Variable, L)
-	assignment.MerkleProofsB = make([][]frontend.Variable, L)
-	assignment.MerkleProofsC = make([][]frontend.Variable, L)
-	assignment.MerkleProofsX = make([][]frontend.Variable, L)
-	assignment.MerkleProofsY = make([][]frontend.Variable, L)
-	assignment.MerkleProofsZ = make([][]frontend.Variable, L)
+	toVarSlice := func(frArr []fr.Element) []frontend.Variable {
+		vArr := make([]frontend.Variable, len(frArr))
+		for k, v := range frArr {
+			vArr[k] = v
+		}
+		return vArr
+	}
 
 	for i := 0; i < L; i++ {
 		idx := indices[i]
 		assignment.Indices[i] = idx
 
-		// 선택된 열 데이터 할당
-		colA, colB, colC := make([]frontend.Variable, K), make([]frontend.Variable, K), make([]frontend.Variable, K)
+		assignment.ColsEncA[i] = make([]frontend.Variable, K)
+		assignment.ColsEncB[i] = make([]frontend.Variable, K)
+		assignment.ColsEncC[i] = make([]frontend.Variable, K)
 		for j := 0; j < K; j++ {
-			colA[j] = encA[j][idx]
-			colB[j] = encB[j][idx]
-			colC[j] = encC[j][idx]
+			assignment.ColsEncA[i][j] = encA[j][idx]
+			assignment.ColsEncB[i][j] = encB[j][idx]
+			assignment.ColsEncC[i][j] = encC[j][idx]
 		}
-		assignment.ColsEncA[i], assignment.ColsEncB[i], assignment.ColsEncC[i] = colA, colB, colC
 
-		// 머클 증명 경로 변환
-		toVar := func(p [][]byte) []frontend.Variable {
-			v := make([]frontend.Variable, len(p))
-			for j := range p {
-				v[j] = p[j]
-			}
-			return v
-		}
-		assignment.MerkleProofsA[i] = toVar(proofsA[i])
-		assignment.MerkleProofsB[i] = toVar(proofsB[i])
-		assignment.MerkleProofsC[i] = toVar(proofsC[i])
-		assignment.MerkleProofsX[i] = toVar(proofsX[i])
-		assignment.MerkleProofsY[i] = toVar(proofsY[i])
-		assignment.MerkleProofsZ[i] = toVar(proofsZ[i])
+		assignment.MerkleProofsA[i] = toVarSlice(utils.GetMerkleProof(treeA, idx, Depth))
+		assignment.MerkleProofsB[i] = toVarSlice(utils.GetMerkleProof(treeB, idx, Depth))
+		assignment.MerkleProofsC[i] = toVarSlice(utils.GetMerkleProof(treeC, idx, Depth))
+		assignment.MerkleProofsX[i] = toVarSlice(utils.GetMerkleProof(treeX, idx, Depth))
+		assignment.MerkleProofsY[i] = toVarSlice(utils.GetMerkleProof(treeY, idx, Depth))
+		assignment.MerkleProofsZ[i] = toVarSlice(utils.GetMerkleProof(treeZ, idx, Depth))
 	}
+	fmt.Printf("   -> Assignment preparation took %v\n", time.Since(start))
 
-	// 12. Gnark 컴파일 및 증명 수행
-	fmt.Println("[12] ZKP 증명 생성 시작...")
-	var myCircuit circuit.MeowCircuit
-	myCircuit.K, myCircuit.N = K, N
-	myCircuit.ChallengeR = make([]frontend.Variable, K)
-	myCircuit.Indices = make([]frontend.Variable, L)
-	myCircuit.VecX, myCircuit.VecY, myCircuit.VecZ = make([]frontend.Variable, K), make([]frontend.Variable, K), make([]frontend.Variable, K)
-	myCircuit.ColsEncA = make([][]frontend.Variable, L)
-	myCircuit.ColsEncB = make([][]frontend.Variable, L)
-	myCircuit.ColsEncC = make([][]frontend.Variable, L)
-
-	// 머클 증명 깊이(log2(N)) 계산 및 더미 데이터 생성
-	dummyProof := make([]frontend.Variable, len(assignment.MerkleProofsA[0]))
+	fmt.Println("10. [Meow] Compiling Circuit...")
+	start = time.Now()
+	emptyCircuit := circuit.MeowCircuit{
+		K: K, N: N,
+		ChallengeR: make([]frontend.Variable, K), Indices: make([]frontend.Variable, L),
+		VecX: make([]frontend.Variable, K), VecY: make([]frontend.Variable, K), VecZ: make([]frontend.Variable, K),
+		ColsEncA: make([][]frontend.Variable, L), ColsEncB: make([][]frontend.Variable, L), ColsEncC: make([][]frontend.Variable, L),
+		MerkleProofsA: make([][]frontend.Variable, L), MerkleProofsB: make([][]frontend.Variable, L), MerkleProofsC: make([][]frontend.Variable, L),
+		MerkleProofsX: make([][]frontend.Variable, L), MerkleProofsY: make([][]frontend.Variable, L), MerkleProofsZ: make([][]frontend.Variable, L),
+	}
 	for i := 0; i < L; i++ {
-		myCircuit.ColsEncA[i] = make([]frontend.Variable, K)
-		myCircuit.ColsEncB[i] = make([]frontend.Variable, K)
-		myCircuit.ColsEncC[i] = make([]frontend.Variable, K)
-		myCircuit.MerkleProofsA = append(myCircuit.MerkleProofsA, dummyProof)
-		myCircuit.MerkleProofsB = append(myCircuit.MerkleProofsB, dummyProof)
-		myCircuit.MerkleProofsC = append(myCircuit.MerkleProofsC, dummyProof)
-		myCircuit.MerkleProofsX = append(myCircuit.MerkleProofsX, dummyProof)
-		myCircuit.MerkleProofsY = append(myCircuit.MerkleProofsY, dummyProof)
-		myCircuit.MerkleProofsZ = append(myCircuit.MerkleProofsZ, dummyProof)
+		emptyCircuit.ColsEncA[i] = make([]frontend.Variable, K)
+		emptyCircuit.ColsEncB[i] = make([]frontend.Variable, K)
+		emptyCircuit.ColsEncC[i] = make([]frontend.Variable, K)
+		emptyCircuit.MerkleProofsA[i] = make([]frontend.Variable, Depth)
+		emptyCircuit.MerkleProofsB[i] = make([]frontend.Variable, Depth)
+		emptyCircuit.MerkleProofsC[i] = make([]frontend.Variable, Depth)
+		emptyCircuit.MerkleProofsX[i] = make([]frontend.Variable, Depth)
+		emptyCircuit.MerkleProofsY[i] = make([]frontend.Variable, Depth)
+		emptyCircuit.MerkleProofsZ[i] = make([]frontend.Variable, Depth)
 	}
 
-	ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &myCircuit)
+	ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &emptyCircuit)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("❌ Compilation failed: %v", err)
 	}
+	fmt.Printf("   -> Circuit compiled! Constraints: %d (took %v)\n", ccs.GetNbConstraints(), time.Since(start))
 
+	fmt.Println("11. [Meow] Generating Witness & Proving...")
 	pk, vk, err := groth16.Setup(ccs)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("❌ Setup failed: %v", err)
 	}
 
-	witness, _ := frontend.NewWitness(&assignment, ecc.BN254.ScalarField())
-	publicWitness, _ := witness.Public()
+	witness, err := frontend.NewWitness(&assignment, ecc.BN254.ScalarField())
+	if err != nil {
+		log.Fatalf("❌ Witness generation failed: %v", err)
+	}
+	publicWitness, err := witness.Public()
+	if err != nil {
+		log.Fatalf("❌ Public witness extraction failed: %v", err)
+	}
 
 	proof, err := groth16.Prove(ccs, pk, witness)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("❌ Proving failed: %v", err)
 	}
 
+	fmt.Println("12. [Meow] Verifying...")
 	err = groth16.Verify(proof, vk, publicWitness)
 	if err != nil {
-		fmt.Printf("증명 검증 실패: %v\n", err)
-	} else {
-		fmt.Println("🎉 증명 검증 성공! A * B = C 가 성립합니다.")
+		log.Fatalf("❌ Verification failed: %v", err)
 	}
+	fmt.Println("🎉 [Meow] Proof successfully generated and verified!")
 }
