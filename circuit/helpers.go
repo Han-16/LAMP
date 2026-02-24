@@ -8,34 +8,35 @@ import (
 func VerifyColumnMerkleProof(
 	api frontend.API,
 	h mimc.MiMC,
-	root frontend.Variable,
 	column []frontend.Variable,
-	merkleIndex frontend.Variable,
-	merkleProofs []frontend.Variable,
-) {
-	// leaf = H(column...)
+	root frontend.Variable,
+	merkle_proof []frontend.Variable,
+	index frontend.Variable,
+) error {
+	depth := len(merkle_proof)
+
 	h.Reset()
 	h.Write(column...)
-	leafHash := h.Sum()
+	h.Sum()
+	leaf := h.Sum()
 
-	depth := len(merkleProofs)
-	indexBits := api.ToBinary(merkleIndex, depth)
+	proofIndices := api.ToBinary(index, depth)
 
-	hashed := leafHash
-	for i := 0; i < depth; i++ {
-		sibling := merkleProofs[i]
-		bit := indexBits[i] // 0 => left, 1 => right
+	hashed := leaf
+	for j := 0; j < depth; j++ {
+		element := merkle_proof[j]
+		bit := proofIndices[j]
 
-		// If bit==0: (hashed, sibling), else: (sibling, hashed)
-		left := api.Select(bit, sibling, hashed)
-		right := api.Select(bit, hashed, sibling)
+		d1 := api.Select(bit, element, hashed)
+		d2 := api.Select(bit, hashed, element)
 
 		h.Reset()
-		h.Write(left, right)
+		h.Write(d1, d2)
 		hashed = h.Sum()
 	}
 
 	api.AssertIsEqual(hashed, root)
+	return nil
 }
 
 func SelectTargetIndex(api frontend.API, array []frontend.Variable, indexBits []frontend.Variable) frontend.Variable {

@@ -7,32 +7,24 @@ import (
 )
 
 type MeowCircuit struct {
-	// Configurations
-	K, N int
-
-	// Public Inputs
-	Roots      [6]frontend.Variable `gnark:",public"` // cm_A, cm_B, cm_C, cm_x, cm_y, cm_z
-	CmABC      frontend.Variable    `gnark:",public"` // Commitment of cm_A, cm_B, cm_C
-	CmXYZ      frontend.Variable    `gnark:",public"` // Commitment of cm_x, cm_y, cm_z
-	ChallengeR []frontend.Variable  `gnark:",public"` // Random vector r (Length K) (It is drived from cm_A, cm_B, cm_C)
-	Indices    []frontend.Variable  `gnark:",public"` // The index set I (It is drived from cm_x, cm_y, cm_z)
-
-	// Private Inputs
-	ColsEncA [][]frontend.Variable // [L][K] Encoded columns of A
-	ColsEncB [][]frontend.Variable // [L][K] Encoded columns of B
-	ColsEncC [][]frontend.Variable // [L][K] Encoded columns of C
-
-	VecX []frontend.Variable // [K] vector x
-	VecY []frontend.Variable // [K] vector y
-	VecZ []frontend.Variable // [K] vector z
-
-	MerkleProofsA [][]frontend.Variable // [L][depth] Merkle proofs for columns of A (depth: log(N))
-	MerkleProofsB [][]frontend.Variable // [L][depth] Merkle proofs for columns of B (depth: log(N))
-	MerkleProofsC [][]frontend.Variable // [L][depth] Merkle proofs for columns of C (depth: log(N))
-
-	MerkleProofsX [][]frontend.Variable // [L][depth] Merkle proofs for columns of x (depth: log(N))
-	MerkleProofsY [][]frontend.Variable // [L][depth] Merkle proofs for columns of y (depth: log(N))
-	MerkleProofsZ [][]frontend.Variable // [L][depth] Merkle proofs for columns of z (depth: log(N))
+	K, N          int
+	Roots         [6]frontend.Variable `gnark:",public"`
+	CmABC         frontend.Variable    `gnark:",public"`
+	CmXYZ         frontend.Variable    `gnark:",public"`
+	ChallengeR    []frontend.Variable  `gnark:",public"`
+	Indices       []frontend.Variable  `gnark:",public"`
+	ColsEncA      [][]frontend.Variable
+	ColsEncB      [][]frontend.Variable
+	ColsEncC      [][]frontend.Variable
+	VecX          []frontend.Variable
+	VecY          []frontend.Variable
+	VecZ          []frontend.Variable
+	MerkleProofsA [][]frontend.Variable
+	MerkleProofsB [][]frontend.Variable
+	MerkleProofsC [][]frontend.Variable
+	MerkleProofsX [][]frontend.Variable
+	MerkleProofsY [][]frontend.Variable
+	MerkleProofsZ [][]frontend.Variable
 }
 
 func (c *MeowCircuit) Define(api frontend.API) error {
@@ -44,51 +36,29 @@ func (c *MeowCircuit) Define(api frontend.API) error {
 	L := len(c.Indices)
 	depth := len(c.MerkleProofsA[0])
 
-	// 1. Verify commitments to A, B, C and x, y, z
+	// 1. Verify commitments
 	h.Reset()
-	h.Write(c.Roots[0]) // Roots[0] = cm_A
-	h.Write(c.Roots[1]) // Roots[1] = cm_B
-	h.Write(c.Roots[2]) // Roots[2] = cm_C
-	expectedCmABC := h.Sum()
-	api.AssertIsEqual(c.CmABC, expectedCmABC)
+	h.Write(c.Roots[0], c.Roots[1], c.Roots[2])
+	api.AssertIsEqual(c.CmABC, h.Sum())
 
 	h.Reset()
-	h.Write(c.Roots[3]) // Roots[3] = cm_x
-	h.Write(c.Roots[4]) // Roots[4] = cm_y
-	h.Write(c.Roots[5]) // Roots[5] = cm_z
-	expectedCmXYZ := h.Sum()
-	api.AssertIsEqual(c.CmXYZ, expectedCmXYZ)
+	h.Write(c.Roots[3], c.Roots[4], c.Roots[5])
+	api.AssertIsEqual(c.CmXYZ, h.Sum())
 
 	// 2. Encode vectors
-	EncX, err := encoder.EncodeInCircuit(c.VecX)
-	if err != nil {
-		return err
-	}
-	EncY, err := encoder.EncodeInCircuit(c.VecY)
-	if err != nil {
-		return err
-	}
-	EncZ, err := encoder.EncodeInCircuit(c.VecZ)
-	if err != nil {
-		return err
-	}
+	EncX, _ := encoder.EncodeInCircuit(c.VecX)
+	EncY, _ := encoder.EncodeInCircuit(c.VecY)
+	EncZ, _ := encoder.EncodeInCircuit(c.VecZ)
 
-	// 3. Verify Folding, i.e., x =  r * A, y = x * B, z = r * C
+	// 3. Verify Folding & Proximity
 	for i := 0; i < L; i++ {
 		idx := c.Indices[i]
 
-		// 3.1 Folding
-		var foldA, foldB, foldC frontend.Variable
-		foldA = Fold(api, c.ChallengeR, c.ColsEncA[i])
-		foldB = Fold(api, c.VecX, c.ColsEncB[i])
-		foldC = Fold(api, c.ChallengeR, c.ColsEncC[i])
+		foldA := Fold(api, c.ChallengeR, c.ColsEncA[i])
+		foldB := Fold(api, c.VecX, c.ColsEncB[i])
+		foldC := Fold(api, c.ChallengeR, c.ColsEncC[i])
 
-		// 3.2 check proximity
-		// foldA[idx] == EncX[idx]
-		// foldB[idx] == EncY[idx]
-		// foldC[idx] == EncZ[idx]
 		idxBits := api.ToBinary(idx, depth)
-
 		targetEncX := SelectTargetIndex(api, EncX, idxBits)
 		targetEncY := SelectTargetIndex(api, EncY, idxBits)
 		targetEncZ := SelectTargetIndex(api, EncZ, idxBits)
@@ -98,15 +68,26 @@ func (c *MeowCircuit) Define(api frontend.API) error {
 		api.AssertIsEqual(foldC, targetEncZ)
 
 		// // 4. Verify Merkle Proofs for A, B, C
-		// VerifyColumnMerkleProof(api, h, c.Roots[0], c.ColsEncA[i], idx, c.MerkleProofsA[i])
-		// VerifyColumnMerkleProof(api, h, c.Roots[1], c.ColsEncB[i], idx, c.MerkleProofsB[i])
-		// VerifyColumnMerkleProof(api, h, c.Roots[2], c.ColsEncC[i], idx, c.MerkleProofsC[i])
+		if err := VerifyColumnMerkleProof(api, h, c.ColsEncA[i], c.Roots[0], c.MerkleProofsA[i], idx); err != nil {
+			return err
+		}
+		if err := VerifyColumnMerkleProof(api, h, c.ColsEncB[i], c.Roots[1], c.MerkleProofsB[i], idx); err != nil {
+			return err
+		}
+		if err := VerifyColumnMerkleProof(api, h, c.ColsEncC[i], c.Roots[2], c.MerkleProofsC[i], idx); err != nil {
+			return err
+		}
 
-		// // // 5. Verify Merkle Proofs for x, y, z
-		// VerifyColumnMerkleProof(api, h, c.Roots[3], []frontend.Variable{targetEncX}, idx, c.MerkleProofsX[i])
-		// VerifyColumnMerkleProof(api, h, c.Roots[4], []frontend.Variable{targetEncY}, idx, c.MerkleProofsY[i])
-		// VerifyColumnMerkleProof(api, h, c.Roots[5], []frontend.Variable{targetEncZ}, idx, c.MerkleProofsZ[i])
+		// 5. Verify Merkle Proofs for x, y, z
+		if err := VerifyColumnMerkleProof(api, h, []frontend.Variable{targetEncX}, c.Roots[3], c.MerkleProofsX[i], idx); err != nil {
+			return err
+		}
+		if err := VerifyColumnMerkleProof(api, h, []frontend.Variable{targetEncY}, c.Roots[4], c.MerkleProofsY[i], idx); err != nil {
+			return err
+		}
+		if err := VerifyColumnMerkleProof(api, h, []frontend.Variable{targetEncZ}, c.Roots[5], c.MerkleProofsZ[i], idx); err != nil {
+			return err
+		}
 	}
-
 	return nil
 }
