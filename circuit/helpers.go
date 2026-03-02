@@ -1,6 +1,7 @@
 package circuit
 
 import (
+	"github.com/Han-16/meow/rs"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/std/hash/mimc"
 )
@@ -69,4 +70,8 @@ func Fold(api frontend.API, lhs, rhs []frontend.Variable) frontend.Variable {
 		acc = api.Add(acc, api.Mul(lhs[j], rhs[j]))
 	}
 	return acc
+}
+
+func CheckEncode(api frontend.API, encoder *rs.Encoder, vec []frontend.Variable, encVec []frontend.Variable) {
+
 }

@@ -28,7 +28,7 @@ import (
 	fcs "github.com/consensys/gnark/frontend/cs"
 )
 
-var HackBlinding fr.Element
+var HackBlindings []fr.Element
 
 // Proof represents a Groth16 proof that was encoded with a ProvingKey and can be verified
 // with a valid statement and a VerifyingKey
@@ -70,6 +70,8 @@ func Prove(r1cs *cs.R1CS, pk *ProvingKey, fullWitness witness.Witness, opts ...b
 
 	privateCommittedValues := make([][]fr.Element, len(commitmentInfo))
 
+	HackBlindings = make([]fr.Element, len(commitmentInfo))
+
 	// override hints
 	bsb22ID := solver.GetHintID(fcs.Bsb22CommitmentComputePlaceholder)
 	solverOpts = append(solverOpts, solver.OverrideHint(bsb22ID, func(_ *big.Int, in []*big.Int, out []*big.Int) error {
@@ -85,8 +87,9 @@ func Prove(r1cs *cs.R1CS, pk *ProvingKey, fullWitness witness.Witness, opts ...b
 		// =========================================================
 		// 🔥 [HACK] Extract blinding factor
 		if len(privateCommittedValues[i]) > 0 {
-			HackBlinding = privateCommittedValues[i][len(privateCommittedValues[i])-1]
-			fmt.Printf("\n[HACK] Extracted Blinding Factor: %s\n", HackBlinding.String())
+			bf := privateCommittedValues[i][len(privateCommittedValues[i])-1]
+			HackBlindings[i] = bf
+			fmt.Printf("\n[HACK] Extracted Blinding Factor for Commit [%d]: %s\n", i, bf.String())
 		}
 		// =========================================================
 

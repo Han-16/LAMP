@@ -1,12 +1,21 @@
 package utils
 
 import (
-	"sync"
+	"math/big"
 
+	"github.com/consensys/gnark-crypto/ecc/bn254"
+	"github.com/consensys/gnark-crypto/ecc/bn254/fp"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr/mimc"
 )
 
+// CommitKey contains k+1 group bases for Pedersen commitment.
+type CommitKey struct {
+	G []bn254.G1Affine // Basis vector of length k
+	H bn254.G1Affine   // Basis for hiding (h)
+}
+
+// HashElements hashes the given fr.Elements using MiMC.
 func HashElements(elements ...fr.Element) fr.Element {
 	h := mimc.NewMiMC()
 	for _, e := range elements {
@@ -18,68 +27,85 @@ func HashElements(elements ...fr.Element) fr.Element {
 	return res
 }
 
-func BuildMerkleTree(leaves []fr.Element, depth int) ([][]fr.Element, fr.Element) {
-	tree := make([][]fr.Element, depth+1)
-	tree[0] = leaves
-	for level := 0; level < depth; level++ {
-		numNodes := len(tree[level]) / 2
-		tree[level+1] = make([]fr.Element, numNodes)
-		for i := 0; i < numNodes; i++ {
-			tree[level+1][i] = HashElements(tree[level][2*i], tree[level][2*i+1])
-		}
+// PedersenCommit performs a Pedersen commitment given a column vector x of length k and a blinding factor o.
+func PedersenCommit(column []fr.Element, blinding fr.Element, ck CommitKey) bn254.G1Affine {
+	var res bn254.G1Jac
+	var tmp bn254.G1Jac
+	var baseJac bn254.G1Jac
+	var b big.Int
+
+	// 1) Add hiding element: h^o
+	blinding.BigInt(&b)
+	baseJac.FromAffine(&ck.H)
+	res.ScalarMultiplication(&baseJac, &b)
+
+	// 2) Add vector elements: g_i^x_i
+	for i, val := range column {
+		val.BigInt(&b)
+		baseJac.FromAffine(&ck.G[i])
+		tmp.ScalarMultiplication(&baseJac, &b)
+		res.AddAssign(&tmp)
 	}
-	return tree, tree[depth][0]
+
+	var resAffine bn254.G1Affine
+	resAffine.FromJacobian(&res)
+	return resAffine
 }
 
-func GetMerkleProof(tree [][]fr.Element, idx, depth int) []fr.Element {
-	proof := make([]fr.Element, depth)
-	currIdx := idx
-	for level := 0; level < depth; level++ {
-		siblingIdx := currIdx ^ 1
-		proof[level] = tree[level][siblingIdx]
-		currIdx /= 2
-	}
-	return proof
+// FpToFr is a helper function that converts an Fp coordinate of the elliptic curve to an Fr element.
+func FpToFr(fpElem fp.Element) fr.Element {
+	var frElem fr.Element
+	b := fpElem.Bytes()
+	frElem.SetBytes(b[:])
+	return frElem
 }
 
-func VecMatMul(v []fr.Element, M [][]fr.Element, K int) []fr.Element {
-	res := make([]fr.Element, K)
-	for j := 0; j < K; j++ {
-		var sum fr.Element
-		for i := 0; i < K; i++ {
-			var tmp fr.Element
-			tmp.Mul(&v[i], &M[i][j])
-			sum.Add(&sum, &tmp)
-		}
-		res[j] = sum
-	}
-	return res
+// HashPoint hashes the x and y coordinates of a point on the elliptic curve (G1Affine) into an Fr element.
+func HashPoint(p bn254.G1Affine) fr.Element {
+	xFr := FpToFr(p.X)
+	yFr := FpToFr(p.Y)
+	return HashElements(xFr, yFr)
 }
 
-func MatMul(A, B [][]fr.Element, K int) [][]fr.Element {
-	C := make([][]fr.Element, K)
-	for i := 0; i < K; i++ {
-		C[i] = make([]fr.Element, K)
+// SetupCommitKey generates a CommitKey with k bases and 1 hiding basis.
+func SetupCommitKey(k int) CommitKey {
+	var ck CommitKey
+	ck.G = make([]bn254.G1Affine, k)
+
+	_, _, G1, _ := bn254.Generators()
+
+	for i := 0; i < k; i++ {
+		var r fr.Element
+		r.SetRandom()
+		var b big.Int
+		r.BigInt(&b)
+
+		var tmp bn254.G1Jac
+		tmp.FromAffine(&G1)
+		tmp.ScalarMultiplication(&tmp, &b)
+		ck.G[i].FromJacobian(&tmp)
 	}
 
-	var wg sync.WaitGroup
+	var r fr.Element
+	r.SetRandom()
+	var b big.Int
+	r.BigInt(&b)
 
-	for i := 0; i < K; i++ {
-		wg.Add(1)
-		go func(row int) {
-			defer wg.Done()
-			for j := 0; j < K; j++ {
-				var sum fr.Element
-				for k := 0; k < K; k++ {
-					var tmp fr.Element
-					tmp.Mul(&A[row][k], &B[k][j])
-					sum.Add(&sum, &tmp)
-				}
-				C[row][j] = sum
-			}
-		}(i)
+	var tmp bn254.G1Jac
+	tmp.FromAffine(&G1)
+	tmp.ScalarMultiplication(&tmp, &b)
+	ck.H.FromJacobian(&tmp)
+
+	return ck
+}
+
+// GenerateChallengeVector generates a challenge vector using Fiat-Shamir heuristic (hash chaining).
+func GenerateChallengeVector(seed fr.Element, size int) []fr.Element {
+	r := make([]fr.Element, size)
+	currentSeed := seed
+	for i := 0; i < size; i++ {
+		r[i] = HashElements(currentSeed)
+		currentSeed = r[i] // Hash chaining
 	}
-
-	wg.Wait()
-	return C
+	return r
 }
