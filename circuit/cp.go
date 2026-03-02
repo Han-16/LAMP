@@ -2,11 +2,11 @@ package circuit
 
 import "github.com/consensys/gnark/frontend"
 
-type CpLink struct {
+type Cp struct {
 	CommittedValues [][]frontend.Variable
 }
 
-func (c *CpLink) Define(api frontend.API) error {
+func (c *Cp) Define(api frontend.API) error {
 	sum := frontend.Variable(0)
 	committer := api.(frontend.Committer)
 

@@ -29,7 +29,7 @@ func main() {
 	// =========================================================================
 	// 1. Compile & Setup
 	// =========================================================================
-	emptyCircuit := circuit.CpLink{
+	emptyCircuit := circuit.Cp{
 		CommittedValues: make([][]frontend.Variable, L),
 	}
 	for i := 0; i < L; i++ {
@@ -72,7 +72,7 @@ func main() {
 	// 4. Prove & Intercept Blinding Factors
 	// =========================================================================
 	fmt.Println("\n--- Step 1: Generating ZK Proof & Intercepting Blinding Factors ---")
-	assignment := circuit.CpLink{
+	assignment := circuit.Cp{
 		CommittedValues: make([][]frontend.Variable, L),
 	}
 	for i := 0; i < L; i++ {

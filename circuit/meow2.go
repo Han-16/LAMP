@@ -22,9 +22,6 @@ type Meow2Circuit struct {
 	EncX        []frontend.Variable   // [N]
 	EncY        []frontend.Variable   // [N]
 	EncZ        []frontend.Variable   // [N]
-	RandomA     []frontend.Variable   // [L]
-	RandomB     []frontend.Variable   // [L]
-	RandomC     []frontend.Variable   // [L]
 }
 
 func (c *Meow2Circuit) Define(api frontend.API) error {
@@ -41,11 +38,8 @@ func (c *Meow2Circuit) Define(api frontend.API) error {
 	for i := 0; i < L; i++ {
 		var committedValuesA, committedValuesB, committedValuesC []frontend.Variable
 		committedValuesA = append(committedValuesA, c.ColsEncA[i]...)
-		committedValuesA = append(committedValuesA, c.RandomA[i])
 		committedValuesB = append(committedValuesB, c.ColsEncB[i]...)
-		committedValuesB = append(committedValuesB, c.RandomB[i])
 		committedValuesC = append(committedValuesC, c.ColsEncC[i]...)
-		committedValuesC = append(committedValuesC, c.RandomC[i])
 		cmA, err := committer.Commit(committedValuesA...)
 		if err != nil {
 			return err
