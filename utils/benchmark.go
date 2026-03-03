@@ -38,8 +38,8 @@ func AppendResultToCSV(writer *csv.Writer, res BenchmarkResult) {
 	record := []string{
 		strconv.Itoa(res.LogK),
 		res.Rho,
-		fmt.Sprintf("%.6f", res.Precompute),
-		fmt.Sprintf("%.6f", res.Encoding),
+		fmt.Sprintf("%.3f", res.Precompute),
+		fmt.Sprintf("%.3f", res.Encoding),
 		strconv.Itoa(res.Constraints),
 	}
 
