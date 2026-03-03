@@ -2,8 +2,6 @@ package rs
 
 import (
 	"fmt"
-	"runtime"
-	"sync"
 
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr/fft"
@@ -106,42 +104,24 @@ func PrecomputeBarycentricWeights(roots []fr.Element) []fr.Element {
 	n := len(roots)
 	weights := make([]fr.Element, n)
 
-	numWorkers := runtime.NumCPU()
-	var wg sync.WaitGroup
-	chunkSize := (n + numWorkers - 1) / numWorkers
-
-	for w := 0; w < numWorkers; w++ {
-		start := w * chunkSize
-		end := start + chunkSize
-		if end > n {
-			end = n
-		}
-		if start >= n {
-			break
-		}
-
-		wg.Add(1)
-		go func(start, end int) {
-			defer wg.Done()
-			for i := start; i < end; i++ {
-				denom := fr.One()
-				for j := 0; j < n; j++ {
-					if i != j {
-						var diff fr.Element
-						diff.Sub(&roots[i], &roots[j])
-						denom.Mul(&denom, &diff)
-					}
-				}
-				weights[i].Inverse(&denom)
-			}
-		}(start, end)
+	if n == 0 {
+		return weights
 	}
-	wg.Wait()
+
+	var nEle fr.Element
+	nEle.SetUint64(uint64(n))
+
+	var nInv fr.Element
+	nInv.Inverse(&nEle)
+
+	for i := 0; i < n; i++ {
+		weights[i].Mul(&roots[i], &nInv)
+	}
+
 	return weights
 }
 
 func (e *Encoder) EncodeMatrix(matrix [][]fr.Element) ([][]fr.Element, [][]fr.Element, error) {
-	// 1. 행렬의 행(Row) 개수가 K인지 검증
 	if len(matrix) != e.k {
 		return nil, nil, fmt.Errorf("matrix must have exactly K (%d) rows, got %d", e.k, len(matrix))
 	}
