@@ -2,10 +2,12 @@ package rs
 
 import (
 	"fmt"
+	"runtime"
+	"sync"
 
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr/fft"
-	"github.com/consensys/gnark/frontend"
+	"github.com/consensys/gnark-crypto/utils"
 )
 
 type Encoder struct {
@@ -23,45 +25,145 @@ func NewEncoder(k, n int) *Encoder {
 	}
 }
 
-func (e *Encoder) Encode(data []fr.Element) ([]fr.Element, error) {
-	if len(data) > e.k {
-		return nil, fmt.Errorf("input data length cannot exceed k (%d)", e.k)
+// Encode returns both the message coefficients (size K) and the encoded codeword (size N)
+func (e *Encoder) Encode(data []fr.Element) ([]fr.Element, []fr.Element, error) {
+	domainKSize := int(e.domainK.Cardinality)
+	domainNSize := int(e.domainN.Cardinality)
+
+	if len(data) > domainKSize {
+		return nil, nil, fmt.Errorf("input data length cannot exceed domain K size (%d)", domainKSize)
 	}
 
-	paddedData := make([]fr.Element, e.n)
-	copy(paddedData, data)
+	// 1. iFFT: 다항식 계수로 변환
+	coeffs := make([]fr.Element, domainKSize)
+	copy(coeffs, data)
 
-	return paddedData, nil
+	e.domainK.FFTInverse(coeffs, fft.DIF)
+	utils.BitReverse(coeffs)
+
+	// 서킷에 제공할 메시지 계수
+	msgCoeffs := make([]fr.Element, domainKSize)
+	copy(msgCoeffs, coeffs)
+
+	// 2. Zero-Padding
+	paddedCoeffs := make([]fr.Element, domainNSize)
+	copy(paddedCoeffs, coeffs)
+
+	// 3. FFT: 인코딩
+	e.domainN.FFT(paddedCoeffs, fft.DIF)
+	utils.BitReverse(paddedCoeffs)
+
+	return msgCoeffs, paddedCoeffs, nil
 }
 
-// K x K matrix => K x N matrix
-func (e *Encoder) EncodeRowWise(data [][]fr.Element) ([][]fr.Element, error) {
-	encoded := make([][]fr.Element, len(data))
+func (e *Encoder) EncodeRowWise(data [][]fr.Element) ([][]fr.Element, [][]fr.Element, error) {
+	coeffsList := make([][]fr.Element, len(data))
+	encodedList := make([][]fr.Element, len(data))
 	for i, row := range data {
-		encRow, err := e.Encode(row)
+		coeffs, encRow, err := e.Encode(row)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		encoded[i] = encRow
+		coeffsList[i] = coeffs
+		encodedList[i] = encRow
 	}
-	return encoded, nil
+	return coeffsList, encodedList, nil
 }
 
-// Note: This function is not used in the current implementation.
-func (e *Encoder) EncodeInCircuit(data []frontend.Variable) ([]frontend.Variable, error) {
-	if len(data) > e.k {
-		return nil, fmt.Errorf("input data length cannot exceed k (%d)", e.k)
+func (e *Encoder) Verify(encodedData []fr.Element) bool {
+	domainNSize := int(e.domainN.Cardinality)
+	domainKSize := int(e.domainK.Cardinality)
+
+	if len(encodedData) != domainNSize {
+		return false
 	}
 
-	paddedData := make([]frontend.Variable, e.n)
+	coeffs := make([]fr.Element, domainNSize)
+	copy(coeffs, encodedData)
 
-	for i := 0; i < e.n; i++ {
-		if i < len(data) {
-			paddedData[i] = data[i]
-		} else {
-			paddedData[i] = frontend.Variable(0)
+	e.domainN.FFTInverse(coeffs, fft.DIF)
+	utils.BitReverse(coeffs)
+
+	for i := domainKSize; i < domainNSize; i++ {
+		if !coeffs[i].IsZero() {
+			return false
 		}
 	}
 
-	return paddedData, nil
+	return true
+}
+
+func GetDomainRoots(domain *fft.Domain, size int) []fr.Element {
+	roots := make([]fr.Element, size)
+	roots[0].SetOne()
+	for i := 1; i < size; i++ {
+		roots[i].Mul(&roots[i-1], &domain.Generator)
+	}
+	return roots
+}
+
+func PrecomputeBarycentricWeights(roots []fr.Element) []fr.Element {
+	n := len(roots)
+	weights := make([]fr.Element, n)
+
+	numWorkers := runtime.NumCPU()
+	var wg sync.WaitGroup
+	chunkSize := (n + numWorkers - 1) / numWorkers
+
+	for w := 0; w < numWorkers; w++ {
+		start := w * chunkSize
+		end := start + chunkSize
+		if end > n {
+			end = n
+		}
+		if start >= n {
+			break
+		}
+
+		wg.Add(1)
+		go func(start, end int) {
+			defer wg.Done()
+			for i := start; i < end; i++ {
+				denom := fr.One()
+				for j := 0; j < n; j++ {
+					if i != j {
+						var diff fr.Element
+						diff.Sub(&roots[i], &roots[j])
+						denom.Mul(&denom, &diff)
+					}
+				}
+				weights[i].Inverse(&denom)
+			}
+		}(start, end)
+	}
+	wg.Wait()
+	return weights
+}
+
+func (e *Encoder) EncodeMatrix(matrix [][]fr.Element) ([][]fr.Element, [][]fr.Element, error) {
+	// 1. 행렬의 행(Row) 개수가 K인지 검증
+	if len(matrix) != e.k {
+		return nil, nil, fmt.Errorf("matrix must have exactly K (%d) rows, got %d", e.k, len(matrix))
+	}
+
+	coeffsMatrix := make([][]fr.Element, e.k)
+	encodedMatrix := make([][]fr.Element, e.k)
+
+	// 2. 각 행에 대해 K x N 인코딩 수행
+	for i, row := range matrix {
+		// 각 행의 열(Column) 개수가 K를 초과하는지 검증
+		if len(row) > e.k {
+			return nil, nil, fmt.Errorf("row %d length cannot exceed K (%d)", i, e.k)
+		}
+
+		coeffs, encRow, err := e.Encode(row)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to encode row %d: %w", i, err)
+		}
+
+		coeffsMatrix[i] = coeffs
+		encodedMatrix[i] = encRow
+	}
+
+	return coeffsMatrix, encodedMatrix, nil
 }

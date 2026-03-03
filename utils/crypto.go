@@ -9,10 +9,9 @@ import (
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr/mimc"
 )
 
-// CommitKey contains k+1 group bases for Pedersen commitment.
+// CommitKey contains k group bases for commitment.
 type CommitKey struct {
 	G []bn254.G1Affine // Basis vector of length k
-	H bn254.G1Affine   // Basis for hiding (h)
 }
 
 // HashElements hashes the given fr.Elements using MiMC.
@@ -27,19 +26,14 @@ func HashElements(elements ...fr.Element) fr.Element {
 	return res
 }
 
-// PedersenCommit performs a Pedersen commitment given a column vector x of length k and a blinding factor o.
-func PedersenCommit(column []fr.Element, blinding fr.Element, ck CommitKey) bn254.G1Affine {
+// PedersenCommit performs a commitment given a column vector x of length k without a blinding factor.
+func PedersenCommit(column []fr.Element, ck CommitKey) bn254.G1Affine {
 	var res bn254.G1Jac
 	var tmp bn254.G1Jac
 	var baseJac bn254.G1Jac
 	var b big.Int
 
-	// 1) Add hiding element: h^o
-	blinding.BigInt(&b)
-	baseJac.FromAffine(&ck.H)
-	res.ScalarMultiplication(&baseJac, &b)
-
-	// 2) Add vector elements: g_i^x_i
+	// Add vector elements: g_i^x_i
 	for i, val := range column {
 		val.BigInt(&b)
 		baseJac.FromAffine(&ck.G[i])
@@ -67,7 +61,7 @@ func HashPoint(p bn254.G1Affine) fr.Element {
 	return HashElements(xFr, yFr)
 }
 
-// SetupCommitKey generates a CommitKey with k bases and 1 hiding basis.
+// SetupCommitKey generates a CommitKey with k bases.
 func SetupCommitKey(k int) CommitKey {
 	var ck CommitKey
 	ck.G = make([]bn254.G1Affine, k)
@@ -85,16 +79,6 @@ func SetupCommitKey(k int) CommitKey {
 		tmp.ScalarMultiplication(&tmp, &b)
 		ck.G[i].FromJacobian(&tmp)
 	}
-
-	var r fr.Element
-	r.SetRandom()
-	var b big.Int
-	r.BigInt(&b)
-
-	var tmp bn254.G1Jac
-	tmp.FromAffine(&G1)
-	tmp.ScalarMultiplication(&tmp, &b)
-	ck.H.FromJacobian(&tmp)
 
 	return ck
 }

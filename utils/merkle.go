@@ -50,9 +50,8 @@ func GetMerkleProof(tree [][]fr.Element, idx, depth int) []fr.Element {
 	return proof
 }
 
-// CommitMatrix commits a k x l matrix.
 // It performs Pedersen commitments on the columns of the matrix and builds a Merkle tree with the results (a vector of group elements).
-func CommitMatrix(columns [][]fr.Element, blindings []fr.Element, ck CommitKey, depth int) ([][]fr.Element, fr.Element, []bn254.G1Affine) {
+func CommitMatrix(columns [][]fr.Element, ck CommitKey, depth int) ([][]fr.Element, fr.Element, []bn254.G1Affine) {
 	l := len(columns)
 	commitments := make([]bn254.G1Affine, l)
 
@@ -61,7 +60,7 @@ func CommitMatrix(columns [][]fr.Element, blindings []fr.Element, ck CommitKey, 
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			commitments[idx] = PedersenCommit(columns[idx], blindings[idx], ck)
+			commitments[idx] = PedersenCommit(columns[idx], ck)
 		}(i)
 	}
 	wg.Wait()
