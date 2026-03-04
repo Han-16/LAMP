@@ -1,6 +1,8 @@
 package utils
 
 import (
+	"fmt"
+	"math/big"
 	"sync"
 
 	"github.com/consensys/gnark-crypto/ecc/bn254"
@@ -68,4 +70,31 @@ func CommitMatrix(columns [][]fr.Element, ck CommitKey, depth int) ([][]fr.Eleme
 	tree, root := BuildMerkleTreeFromGroupElements(commitments, depth)
 
 	return tree, root, commitments
+}
+
+// GenerateUniqueIndices generates L unique random indices in the range [0, N-1] using a seed.
+func GenerateUniqueIndices(seed fr.Element, N int, L int) ([]int, error) {
+	if L > N {
+		return nil, fmt.Errorf("cannot extract %d unique indices from a pool of %d", L, N)
+	}
+
+	indices := make([]int, 0, L)
+	selected := make(map[int]bool)
+	currentSeed := seed
+
+	for len(indices) < L {
+		currentSeed = HashElements(currentSeed)
+
+		var seedInt big.Int
+		currentSeed.BigInt(&seedInt)
+
+		idx := int(seedInt.Uint64() % uint64(N))
+
+		if !selected[idx] {
+			selected[idx] = true
+			indices = append(indices, idx)
+		}
+	}
+
+	return indices, nil
 }
