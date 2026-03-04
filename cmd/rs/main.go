@@ -27,7 +27,7 @@ func main() {
 	flag.Parse()
 
 	// 1. Init CSV for benchmark results
-	file, writer := utils.InitCSV("../benchmark/reed_solomon_benchmark_results.csv")
+	file, writer := utils.InitCSV("../../benchmark/reed_solomon_benchmark_results.csv")
 	defer file.Close()
 
 	// 2. Run benchmarks
