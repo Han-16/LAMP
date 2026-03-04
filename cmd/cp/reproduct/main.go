@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Han-16/meow/circuit"
+	"github.com/Han-16/meow/utils"
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark-crypto/ecc/bn254"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
@@ -92,7 +93,7 @@ func main() {
 	}
 	fmt.Printf("✅ Proof generated in %s\n", time.Since(start))
 
-	// 증명 결과물에서 L개의 커밋 추출
+	// Extract L commitments from the proof result
 	proofVal := reflect.ValueOf(proof).Elem()
 	commitmentsField := proofVal.FieldByName("Commitments")
 	var proofCommitments []bn254.G1Affine
@@ -110,17 +111,16 @@ func main() {
 	allMatched := true
 
 	for i := 0; i < L; i++ {
-		// 1. 오프체인 커밋 계산 (matrix[i] + hackedBlindings[i])
+		// 1. Calculate off-chain commitment (matrix[i] + hackedBlindings[i])
 		vectorPadded := append(matrix[i], hackedBlindings[i])
-		var manualCommitment bn254.G1Affine
-		_, err = manualCommitment.MultiExp(ck[i], vectorPadded, ecc.MultiExpConfig{})
-		if err != nil {
-			fmt.Printf("⚠️ MultiExp Error on [%d]: %v\n", i, err)
-			allMatched = false
-			continue
-		}
 
-		// 2. 증명 내부 커밋과 비교
+		// Convert the slice extracted from the Proving Key into a utils.CommitKey structure
+		customCK := utils.CommitKey{G: ck[i]}
+
+		// Use the PedersenCommit function from utils
+		manualCommitment := utils.PedersenCommit(vectorPadded, customCK)
+
+		// 2. Compare with the commitment inside the proof
 		circuitCommitment := proofCommitments[i]
 
 		if !manualCommitment.Equal(&circuitCommitment) {
@@ -138,7 +138,7 @@ func main() {
 		fmt.Println("❌ SOME COMMITMENTS FAILED.")
 	}
 
-	// 증명 검증
+	// Verify the proof
 	witnessPublic, _ := witnessFull.Public()
 	if err := groth16.Verify(proof, vk, witnessPublic); err == nil {
 		fmt.Println("\n🎉 Groth16 Verification SUCCESSFUL!")
