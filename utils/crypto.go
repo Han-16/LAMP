@@ -6,7 +6,7 @@ import (
 	"github.com/consensys/gnark-crypto/ecc/bn254"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fp"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
-	"github.com/consensys/gnark-crypto/ecc/bn254/fr/mimc"
+	"golang.org/x/crypto/sha3"
 )
 
 // CommitKey contains k group bases for commitment.
@@ -14,9 +14,9 @@ type CommitKey struct {
 	G []bn254.G1Affine // Basis vector of length k
 }
 
-// HashElements hashes the given fr.Elements using MiMC.
+// HashElements hashes the given fr.Elements using Ethereum's Keccak-256.
 func HashElements(elements ...fr.Element) fr.Element {
-	h := mimc.NewMiMC()
+	h := sha3.NewLegacyKeccak256()
 	for _, e := range elements {
 		b := e.Bytes()
 		h.Write(b[:])
