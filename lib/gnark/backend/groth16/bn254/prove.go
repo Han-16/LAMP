@@ -89,7 +89,7 @@ func Prove(r1cs *cs.R1CS, pk *ProvingKey, fullWitness witness.Witness, opts ...b
 		if len(privateCommittedValues[i]) > 0 {
 			bf := privateCommittedValues[i][len(privateCommittedValues[i])-1]
 			HackBlindings[i] = bf
-			fmt.Printf("\n[HACK] Extracted Blinding Factor for Commit [%d]: %s\n", i, bf.String())
+			fmt.Printf("[HACK] Extracted Blinding Factor for Commit [%d]: %s\n", i, bf.String())
 		}
 		// =========================================================
 
