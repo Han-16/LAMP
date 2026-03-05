@@ -26,7 +26,7 @@ func main() {
 	allFlag := flag.Bool("all", false, "Run benchmarks")
 	flag.Parse()
 
-	outputDir := filepath.Join(".", "benchmark_results")
+	outputDir := filepath.Join("../../benchmark", "benchmark_results")
 	benchmark.EnsureDir(outputDir)
 	csvPath := filepath.Join(outputDir, "reed_solomon_benchmark_results.csv")
 	file, writer := benchmark.InitCSV(csvPath)

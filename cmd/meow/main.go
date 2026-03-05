@@ -31,7 +31,7 @@ func main() {
 	onlyCompileFlag := flag.Bool("OnlyCompile", false, "Only compile the circuit to get constraints")
 	flag.Parse()
 
-	outputDir := filepath.Join(".", "benchmark_results")
+	outputDir := filepath.Join("../../benchmark", "benchmark_results")
 	benchmark.EnsureDir(outputDir)
 	csvPath := filepath.Join(outputDir, "meow_benchmark_results.csv")
 	file, writer := benchmark.InitMeowCSV(csvPath)
@@ -411,7 +411,7 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.M
 		Rho:              rhoStr,
 		N:                N,
 		NumQueries:       L,
-		Constraints:      nbConstraints, // 💡 수집된 Constraints 추가
+		Constraints:      nbConstraints,
 		ComputeTime:      computeTime,
 		MatrixCommitTime: matCommitTime,
 		VectorCommitTime: vecCommitTime,

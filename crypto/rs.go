@@ -129,13 +129,7 @@ func (e *Encoder) EncodeMatrix(matrix [][]fr.Element) ([][]fr.Element, [][]fr.El
 	coeffsMatrix := make([][]fr.Element, e.k)
 	encodedMatrix := make([][]fr.Element, e.k)
 
-	// 2. 각 행에 대해 K x N 인코딩 수행
 	for i, row := range matrix {
-		// 각 행의 열(Column) 개수가 K를 초과하는지 검증
-		if len(row) > e.k {
-			return nil, nil, fmt.Errorf("row %d length cannot exceed K (%d)", i, e.k)
-		}
-
 		coeffs, encRow, err := e.Encode(row)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to encode row %d: %w", i, err)

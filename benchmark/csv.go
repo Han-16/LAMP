@@ -44,7 +44,7 @@ func appendCSV(writer *csv.Writer, record []string, successLog string) {
 	}
 }
 
-type ReedSolomonResult struct { // RS Benchmark
+type ReedSolomonResult struct {
 	LogK        int
 	Rho         string
 	Precompute  float64
@@ -85,9 +85,24 @@ type FreivaldsResult struct {
 	VerifyTime  float64
 }
 
-// =============================================================================
-// 3. 실험별 CSV 입출력 구현부 (API)
-// =============================================================================
+type MeowResult struct {
+	LogK             int
+	Rho              string
+	N                int
+	NumQueries       int // L
+	Constraints      int
+	ComputeTime      float64
+	MatrixCommitTime float64
+	VectorCommitTime float64
+	CircuitProveTime float64
+	CPLinkProveTime  float64
+	TotalProveTime   float64
+	TotalVerifyTime  float64
+	MerkleProofSize  int
+	Groth16ProofSize int
+	CPLinkProofSize  int
+	TotalProofSize   int
+}
 
 // --- RS Benchmark ---
 func InitCSV(filename string) (*os.File, *csv.Writer) {
@@ -166,31 +181,9 @@ func AppendFreivaldsResultToCSV(writer *csv.Writer, res FreivaldsResult) {
 	appendCSV(writer, record, fmt.Sprintf("logK=%d", res.LogK))
 }
 
-// -----------------------------------------------------------------------------
-// [추가됨] Meow (Brakedown + CC-SNARK) 벤치마크
-// -----------------------------------------------------------------------------
-type MeowResult struct {
-	LogK             int
-	Rho              string
-	N                int
-	NumQueries       int // L
-	Constraints      int // 💡 새롭게 추가된 제약 조건(Constraints) 수
-	ComputeTime      float64
-	MatrixCommitTime float64
-	VectorCommitTime float64
-	CircuitProveTime float64
-	CPLinkProveTime  float64
-	TotalProveTime   float64
-	TotalVerifyTime  float64
-	MerkleProofSize  int
-	Groth16ProofSize int
-	CPLinkProofSize  int
-	TotalProofSize   int
-}
-
 func InitMeowCSV(filename string) (*os.File, *csv.Writer) {
 	return initCSV(filename, []string{
-		"LogK", "Rho", "N", "NumQueries", "Constraints", // 💡 Constraints 헤더 추가
+		"LogK", "Rho", "N", "NumQueries", "Constraints",
 		"ComputeTime(s)", "MatrixCommitTime(s)", "VectorCommitTime(s)", "CircuitProveTime(s)",
 		"CPLinkProveTime(s)", "TotalProveTime(s)", "TotalVerifyTime(s)",
 		"MerkleProofSize(B)", "Groth16ProofSize(B)", "CPLinkProofSize(B)", "TotalProofSize(B)",

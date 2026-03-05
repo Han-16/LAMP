@@ -26,8 +26,7 @@ func main() {
 	onlyCompileFlag := flag.Bool("OnlyCompile", false, "Only compile the circuit to get constraints without generating matrices or proofs")
 	flag.Parse()
 
-	// 1. 안전한 벤치마크 디렉토리 및 CSV 파일 초기화
-	outputDir := filepath.Join(".", "benchmark_results")
+	outputDir := filepath.Join("../../benchmark", "benchmark_results")
 	if err := benchmark.EnsureDir(outputDir); err != nil {
 		log.Fatalf("Failed to create directory: %v", err)
 	}

@@ -92,7 +92,6 @@ func (p *Prover) ProveCircuit(r1cs constraint.ConstraintSystem, assignment front
 		cmVec2 = commitmentsField.Interface().([]bn254.G1Affine)
 	}
 
-	// 서킷 내부 커밋의 난수(Blinding) 추출
 	blindings := groth16_bn254.HackBlindings
 	return proof, cmVec2, blindings, nil
 }

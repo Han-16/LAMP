@@ -25,7 +25,7 @@ func HashElements(elements ...fr.Element) fr.Element {
 func HashElementsMiMC(elements ...fr.Element) fr.Element {
 	h := mimc.NewMiMC()
 	for _, e := range elements {
-		b := e.Bytes() // 32-byte Big Endian
+		b := e.Bytes()
 		h.Write(b[:])
 	}
 	var res fr.Element
