@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
 	"log"
@@ -27,6 +28,7 @@ func main() {
 	rhoFlag := flag.String("rho", "1/2", "Code rate")
 	LFlag := flag.Int("L", 128, "Number of unique indices L")
 	allFlag := flag.Bool("all", false, "Run benchmarks")
+	onlyCompileFlag := flag.Bool("OnlyCompile", false, "Only compile the circuit to get constraints")
 	flag.Parse()
 
 	outputDir := filepath.Join(".", "benchmark_results")
@@ -36,19 +38,26 @@ func main() {
 	defer file.Close()
 
 	if *allFlag {
-		fmt.Println("🚀 [ALL MODE] Running Meow ZK benchmarks...")
-		for logK := 4; logK <= 8; logK++ {
-			res := runExperiment(logK, *rhoFlag, *LFlag)
+		if *onlyCompileFlag {
+			fmt.Println("🚀 [OnlyCompile MODE] Checking constraints for K=5 to 15...")
+		} else {
+			fmt.Println("🚀 [ALL MODE] Running Meow ZK benchmarks...")
+		}
+
+		for logK := 5; logK <= 15; logK++ {
+			res := runExperiment(logK, *rhoFlag, *LFlag, *onlyCompileFlag)
+			// 💡 수정됨: OnlyCompile 여부와 상관없이 항상 CSV에 기록합니다.
 			benchmark.AppendMeowResultToCSV(writer, res)
 		}
 	} else {
-		res := runExperiment(*logKFlag, *rhoFlag, *LFlag)
+		res := runExperiment(*logKFlag, *rhoFlag, *LFlag, *onlyCompileFlag)
+		// 💡 수정됨: 단일 실행일 때도 항상 기록합니다.
 		benchmark.AppendMeowResultToCSV(writer, res)
 	}
-	fmt.Println("🎉 All Meow ZK benchmarks finished!")
+	fmt.Println("🎉 All Meow ZK tasks finished!")
 }
 
-func runExperiment(logK int, rhoStr string, L int) benchmark.MeowResult {
+func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.MeowResult {
 	K := 1 << logK
 	N := K << 1
 	if rhoStr == "1/4" {
@@ -60,7 +69,55 @@ func runExperiment(logK int, rhoStr string, L int) benchmark.MeowResult {
 	fmt.Printf("🔥 [Meow ZK Protocol] K=%d, N=%d, L=%d\n", K, N, L)
 
 	// =========================================================================
-	// 1. 행렬 계산 및 인코딩 준비
+	// 💡 [OnlyCompile 모드] 무거운 연산을 모두 스킵하고 서킷만 컴파일하여 제약조건 확인
+	// =========================================================================
+	if onlyCompile {
+		fmt.Println("=== 🔍 Compiling Circuit for Constraints ===")
+
+		domainN := fft.NewDomain(uint64(N))
+		rootsN := crypto.GetDomainRoots(domainN, N)
+		weightsN := crypto.PrecomputeBarycentricWeights(rootsN)
+
+		domainK := fft.NewDomain(uint64(K))
+		rootsK := crypto.GetDomainRoots(domainK, K)
+		weightsK := crypto.PrecomputeBarycentricWeights(rootsK)
+
+		emptyCircuit := &circuit.MeowCircuit{
+			K: K, N: N, Depth: depth,
+			DomainK: rootsK, WeightsK: weightsK,
+			DomainN: rootsN, WeightsN: weightsN,
+			ColsEncA: make([][]frontend.Variable, L), ColsEncB: make([][]frontend.Variable, L), ColsEncC: make([][]frontend.Variable, L),
+			ChallengeR: make([]frontend.Variable, K), Indices: make([]frontend.Variable, L),
+			VecX: make([]frontend.Variable, K), VecY: make([]frontend.Variable, K), VecZ: make([]frontend.Variable, K),
+			EncX: make([]frontend.Variable, N), EncY: make([]frontend.Variable, N), EncZ: make([]frontend.Variable, N),
+			TargetEncX: make([]frontend.Variable, L), TargetEncY: make([]frontend.Variable, L), TargetEncZ: make([]frontend.Variable, L),
+		}
+		for i := 0; i < L; i++ {
+			emptyCircuit.ColsEncA[i] = make([]frontend.Variable, K)
+			emptyCircuit.ColsEncB[i] = make([]frontend.Variable, K)
+			emptyCircuit.ColsEncC[i] = make([]frontend.Variable, K)
+		}
+
+		r1csSystem, err := frontend.Compile(field, r1cs.NewBuilder, emptyCircuit)
+		if err != nil {
+			log.Fatalf("❌ Compilation failed: %v", err)
+		}
+
+		nbConstraints := r1csSystem.GetNbConstraints()
+		fmt.Printf("✅ Circuit compiled successfully! Total Constraints: %d\n\n", nbConstraints)
+
+		// 💡 컴파일 전용 모드에서는 파라미터와 제약조건 수만 기록하고, 나머지는 기본값(0)으로 둡니다.
+		return benchmark.MeowResult{
+			LogK:        logK,
+			Rho:         rhoStr,
+			N:           N,
+			NumQueries:  L,
+			Constraints: nbConstraints,
+		}
+	}
+
+	// =========================================================================
+	// 1. 행렬 계산 및 인코딩 준비 (OnlyCompile이 아닐 때만 실행됨)
 	// =========================================================================
 	startCompute := time.Now()
 	matA := matrix.GenerateRandomMatrix(K, K)
@@ -139,6 +196,10 @@ func runExperiment(logK int, rhoStr string, L int) benchmark.MeowResult {
 	}
 
 	r1csSystem, _ := frontend.Compile(field, r1cs.NewBuilder, emptyCircuit)
+
+	// 💡 일반 벤치마크 모드에서도 Constraints 수를 추출합니다.
+	nbConstraints := r1csSystem.GetNbConstraints()
+
 	pk, vk, _ := groth16.Setup(r1csSystem)
 
 	// =========================================================================
@@ -188,7 +249,6 @@ func runExperiment(logK int, rhoStr string, L int) benchmark.MeowResult {
 	verifier := protocol.NewVerifier(vk, ck1, proverWithPK.CK2)
 
 	startCircuitProve := time.Now()
-	// 💡 원래의 깔끔한 구조로 복구: assignment를 그대로 넘깁니다.
 	circuitProof, cmVec2, blindingsIn, err := proverWithPK.ProveCircuit(r1csSystem, assignment)
 	if err != nil {
 		log.Fatalf("❌ Circuit proof failed: %v", err)
@@ -201,7 +261,6 @@ func runExperiment(logK int, rhoStr string, L int) benchmark.MeowResult {
 	fmt.Println("=== Generating Off-chain Proofs ===")
 	startOffchainProve := time.Now()
 
-	// 동적 인덱스 매핑: Gnark의 와이어 정렬에 구애받지 않고 길이에 따라 분류
 	var idxK []int
 	var idx1 []int
 	for i, ck := range proverWithPK.CK2 {
@@ -261,7 +320,6 @@ func runExperiment(logK int, rhoStr string, L int) benchmark.MeowResult {
 	fmt.Println("=== Verifying All Proofs ===")
 	startVerify := time.Now()
 
-	// 💡 원래의 깔끔한 구조로 복구: 검증을 위해 위트니스를 생성합니다.
 	witness_for_verify, err := frontend.NewWitness(assignment, field)
 	if err != nil {
 		log.Fatalf("❌ Failed to create witness for verification: %v", err)
@@ -323,11 +381,37 @@ func runExperiment(logK int, rhoStr string, L int) benchmark.MeowResult {
 
 	totalProveTime := matCommitTime + vecCommitTime + circuitProveTime + offchainProveTime
 
+	// =========================================================================
+	// 7. Proof Size(Bytes) 계산
+	// =========================================================================
+	var buf bytes.Buffer
+	circuitProof.WriteTo(&buf)
+	groth16ProofSize := buf.Len()
+
+	merkleProofSize := L * 6 * depth * 32
+
+	cpLinkProofSize := 0
+	for i := 0; i < L; i++ {
+		cpLinkProofSize += 128 + (len(cpA[i].Z) * 32)
+		cpLinkProofSize += 128 + (len(cpB[i].Z) * 32)
+		cpLinkProofSize += 128 + (len(cpC[i].Z) * 32)
+
+		cpLinkProofSize += 128 + (len(cpX[i].Z) * 32)
+		cpLinkProofSize += 128 + (len(cpY[i].Z) * 32)
+		cpLinkProofSize += 128 + (len(cpZ[i].Z) * 32)
+	}
+
+	totalProofSize := groth16ProofSize + merkleProofSize + cpLinkProofSize
+
+	fmt.Printf("📊 Proof Sizes -> Groth16: %d B, Merkle: %d B, CPLink: %d B | Total: %d B\n",
+		groth16ProofSize, merkleProofSize, cpLinkProofSize, totalProofSize)
+
 	return benchmark.MeowResult{
 		LogK:             logK,
 		Rho:              rhoStr,
 		N:                N,
 		NumQueries:       L,
+		Constraints:      nbConstraints, // 💡 수집된 Constraints 추가
 		ComputeTime:      computeTime,
 		MatrixCommitTime: matCommitTime,
 		VectorCommitTime: vecCommitTime,
@@ -335,5 +419,9 @@ func runExperiment(logK int, rhoStr string, L int) benchmark.MeowResult {
 		CPLinkProveTime:  offchainProveTime,
 		TotalProveTime:   totalProveTime,
 		TotalVerifyTime:  totalVerifyTime,
+		MerkleProofSize:  merkleProofSize,
+		Groth16ProofSize: groth16ProofSize,
+		CPLinkProofSize:  cpLinkProofSize,
+		TotalProofSize:   totalProofSize,
 	}
 }
