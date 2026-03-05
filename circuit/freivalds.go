@@ -35,7 +35,7 @@ func (c *FreivaldsCircuit) Define(api frontend.API) error {
 		R[i] = api.Mul(R[i-1], r)
 	}
 
-	// 1. x = R * A 계산
+	// 1. x = R * A
 	x := make([]frontend.Variable, c.K)
 	for j := 0; j < c.K; j++ {
 		x[j] = frontend.Variable(0)
@@ -53,7 +53,6 @@ func (c *FreivaldsCircuit) Define(api frontend.API) error {
 			z = api.Add(z, api.Mul(R[i], c.C[i][j]))
 		}
 
-		// 원소가 동일한지 검증
 		api.AssertIsEqual(y, z)
 	}
 

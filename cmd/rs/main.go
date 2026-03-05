@@ -4,11 +4,13 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"path/filepath"
 	"time"
 
+	"github.com/Han-16/meow/benchmark"
 	"github.com/Han-16/meow/circuit"
-	"github.com/Han-16/meow/rs"
-	"github.com/Han-16/meow/utils"
+	"github.com/Han-16/meow/crypto"
+	"github.com/Han-16/meow/protocol"
 
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
@@ -19,125 +21,77 @@ import (
 )
 
 func main() {
-	// Command line flags
-	logKFlag := flag.Int("K", 10, "Log base 2 of K (e.g., 10 for K=1024)")
-	rhoFlag := flag.String("rho", "1/2", "Code rate: '1/2' or '1/4'")
-	allFlag := flag.Bool("all", false, "Run benchmarks for K=10..20 and rho=1/2, 1/4")
-
+	logKFlag := flag.Int("K", 10, "Log base 2 of K")
+	rhoFlag := flag.String("rho", "1/2", "Code rate")
+	allFlag := flag.Bool("all", false, "Run benchmarks")
 	flag.Parse()
 
-	// 1. Init CSV for benchmark results
-	file, writer := utils.InitCSV("../../benchmark/reed_solomon_benchmark_results.csv")
+	outputDir := filepath.Join(".", "benchmark_results")
+	benchmark.EnsureDir(outputDir)
+	csvPath := filepath.Join(outputDir, "reed_solomon_benchmark_results.csv")
+	file, writer := benchmark.InitCSV(csvPath)
 	defer file.Close()
 
-	// 2. Run benchmarks
 	if *allFlag {
-		fmt.Println("🚀 [ALL MODE] Running benchmarks: K from 2^10 to 2^20, rho in {1/2, 1/4}")
 		rhos := []string{"1/2", "1/4"}
 		for logK := 10; logK <= 20; logK++ {
 			for _, r := range rhos {
 				res := runExperiment(logK, r)
-
-				utils.AppendResultToCSV(writer, res)
-
-				fmt.Println("----------------------------------------------------------------")
+				benchmark.AppendResultToCSV(writer, res)
 			}
 		}
 	} else {
 		res := runExperiment(*logKFlag, *rhoFlag)
-		utils.AppendResultToCSV(writer, res)
+		benchmark.AppendResultToCSV(writer, res)
 	}
-
-	fmt.Println("🎉 All benchmarks finished successfully!")
 }
 
-func runExperiment(logK int, rhoStr string) utils.BenchmarkResult {
+func runExperiment(logK int, rhoStr string) benchmark.ReedSolomonResult {
 	K := 1 << logK
-	var N int
-
-	switch rhoStr {
-	case "1/2":
-		N = K << 1
-	case "1/4":
+	N := K << 1
+	if rhoStr == "1/4" {
 		N = K << 2
-	default:
-		log.Fatalf("❌ Invalid rho value: %s. Use '1/2' or '1/4'", rhoStr)
 	}
 
-	fmt.Printf("🔥 Experiment: K = 2^%d (%d), N = %d, rho = %s\n", logK, K, N, rhoStr)
+	fmt.Printf("🔥 [RS] K = 2^%d (%d), N = %d, rho = %s\n", logK, K, N, rhoStr)
 
-	// ------------------------------------------------------------------------
-	// 0. Precompute
-	// ------------------------------------------------------------------------
-	fmt.Printf("=== 0. Precompute Barycentric Weights ===\n")
 	field := ecc.BN254.ScalarField()
-	startTime := time.Now()
 
+	// Precompute
+	startPre := time.Now()
 	domainN := fft.NewDomain(uint64(N))
-	rootsN := rs.GetDomainRoots(domainN, N)
-	weightsN := rs.PrecomputeBarycentricWeights(rootsN)
+	rootsN := crypto.GetDomainRoots(domainN, N)
+	weightsN := crypto.PrecomputeBarycentricWeights(rootsN)
+	preTime := time.Since(startPre).Seconds()
 
-	precomputeTimeS := time.Since(startTime).Seconds()
-	fmt.Printf("✅ Precomputation completed in: %.6f s\n", precomputeTimeS)
+	// Circuit Setup
+	emptyCircuit := &circuit.RSCircuit{
+		K: K, N: N, DomainN: rootsN, WeightsN: weightsN,
+		Message: make([]frontend.Variable, K), CodewordValues: make([]frontend.Variable, N),
+	}
+	r1csCircuit, _ := frontend.Compile(field, r1cs.NewBuilder, emptyCircuit)
+	pk, vk, _ := groth16.Setup(r1csCircuit)
 
-	// ------------------------------------------------------------------------
-	// 1. Encoding
-	// ------------------------------------------------------------------------
-	fmt.Println("=== 1. Encoding Data with Reed-Solomon Code (Offline) ===")
-	startTime = time.Now()
-	encoder := rs.NewEncoder(K, N)
+	// 🌟 Prover / Verifier 초기화 (RS는 CommitKey 불필요)
+	prover := protocol.NewProver(pk, crypto.CommitKey{}, crypto.NewEncoder(K, N))
+	verifier := protocol.NewVerifier(vk, crypto.CommitKey{}, nil)
 
+	// 1. Encoding (Prover 활용)
+	startEnc := time.Now()
 	x := make([]fr.Element, K)
 	for j := 0; j < K; j++ {
 		x[j].SetRandom()
 	}
 
-	coeffs, enc, err := encoder.Encode(x)
+	coeffs, enc, err := prover.Encoder.Encode(x)
 	if err != nil {
 		log.Fatalf("Encoding failed: %v", err)
 	}
-	encodingTimeS := time.Since(startTime).Seconds()
-	fmt.Printf("✅ Encoding completed in: %.6f s\n", encodingTimeS)
+	encTime := time.Since(startEnc).Seconds()
 
-	// ------------------------------------------------------------------------
-	// 2. Circuit Setup
-	// ------------------------------------------------------------------------
-	fmt.Println("=== 2. Circuit Setup (Compile & Setup) ===")
-	startTime = time.Now()
-
-	emptyCoeffs := make([]frontend.Variable, K)
-	emptyEncoded := make([]frontend.Variable, N)
-
-	emptyCircuit := &circuit.RSCircuit{
-		K:              K,
-		N:              N,
-		DomainN:        rootsN,
-		WeightsN:       weightsN,
-		Message:        emptyCoeffs,
-		CodewordValues: emptyEncoded,
-	}
-
-	r1csCircuit, err := frontend.Compile(field, r1cs.NewBuilder, emptyCircuit)
-	if err != nil {
-		log.Fatalf("Circuit compilation failed: %v", err)
-	}
-
-	numConstraints := r1csCircuit.GetNbConstraints()
-	fmt.Printf("📊 Circuit Constraints: %d\n", numConstraints)
-
-	pk, vk, err := groth16.Setup(r1csCircuit)
-	if err != nil {
-		log.Fatalf("Groth16 setup failed: %v", err)
-	}
-	fmt.Printf("✅ Setup completed in: %.6f s\n", time.Since(startTime).Seconds())
-
-	// ------------------------------------------------------------------------
-	// 3. Prove & Verify
-	// ------------------------------------------------------------------------
-	fmt.Println("=== 3. Prove & Verify ===")
+	// 2. Prove Circuit (Prover 활용)
 	assignCoeffs := make([]frontend.Variable, K)
 	assignEncoded := make([]frontend.Variable, N)
-
 	for j := 0; j < K; j++ {
 		assignCoeffs[j] = coeffs[j]
 	}
@@ -146,44 +100,36 @@ func runExperiment(logK int, rhoStr string) utils.BenchmarkResult {
 	}
 
 	assignment := &circuit.RSCircuit{
-		K:              K,
-		N:              N,
-		DomainN:        rootsN,
-		WeightsN:       weightsN,
-		Message:        assignCoeffs,
-		CodewordValues: assignEncoded,
+		K: K, N: N, DomainN: rootsN, WeightsN: weightsN,
+		Message: assignCoeffs, CodewordValues: assignEncoded,
 	}
 
-	witness, err := frontend.NewWitness(assignment, field)
+	startProve := time.Now()
+	proof, _, _, err := prover.ProveCircuit(r1csCircuit, assignment)
 	if err != nil {
-		log.Fatalf("Witness creation failed: %v", err)
+		log.Fatalf("Proof failed: %v", err)
 	}
+	proveTime := time.Since(startProve).Seconds()
 
-	proveStartTime := time.Now()
-	proof, err := groth16.Prove(r1csCircuit, pk, witness)
+	// 3. Verify Circuit (Verifier 활용)
+	startVerify := time.Now()
+	witness, _ := frontend.NewWitness(assignment, field)
+	publicWitness, _ := witness.Public()
+
+	err = verifier.VerifyGroth16(proof, publicWitness)
 	if err != nil {
-		log.Fatalf("Proof generation failed: %v", err)
+		log.Fatalf("Verify failed: %v", err)
 	}
-	fmt.Printf("✅ Prove completed in: %.6f s\n", time.Since(proveStartTime).Seconds())
+	verifyTime := time.Since(startVerify).Seconds()
 
-	publicWitness, err := witness.Public()
-	if err != nil {
-		log.Fatalf("Public witness extraction failed: %v", err)
-	}
-
-	verifyStartTime := time.Now()
-	err = groth16.Verify(proof, vk, publicWitness)
-	if err != nil {
-		log.Fatalf("Proof verification failed: %v", err)
-	} else {
-		fmt.Printf("✅ Verify completed in: %.6f s\n", time.Since(verifyStartTime).Seconds())
-	}
-
-	return utils.BenchmarkResult{
+	return benchmark.ReedSolomonResult{
 		LogK:        logK,
 		Rho:         rhoStr,
-		Precompute:  precomputeTimeS,
-		Encoding:    encodingTimeS,
-		Constraints: numConstraints,
+		Precompute:  preTime,
+		Encoding:    encTime,
+		Constraints: r1csCircuit.GetNbConstraints(),
+		Setup:       0, // Setup 측정 시간 원할 시 추가 가능
+		Prove:       proveTime,
+		Verify:      verifyTime,
 	}
 }

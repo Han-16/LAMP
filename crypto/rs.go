@@ -1,4 +1,4 @@
-package rs
+package crypto
 
 import (
 	"fmt"

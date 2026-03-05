@@ -1,4 +1,4 @@
-package utils
+package matrix
 
 import (
 	"sync"
@@ -35,7 +35,6 @@ func MatMul(A, B [][]fr.Element, K int) [][]fr.Element {
 	}
 
 	var wg sync.WaitGroup
-
 	for i := 0; i < K; i++ {
 		wg.Add(1)
 		go func(row int) {
@@ -51,12 +50,10 @@ func MatMul(A, B [][]fr.Element, K int) [][]fr.Element {
 			}
 		}(i)
 	}
-
 	wg.Wait()
 	return C
 }
 
-// GenerateRandomMatrix generates a rows x cols matrix filled with random fr.Elements.
 func GenerateRandomMatrix(rows, cols int) [][]fr.Element {
 	M := make([][]fr.Element, rows)
 	for i := 0; i < rows; i++ {
@@ -68,7 +65,6 @@ func GenerateRandomMatrix(rows, cols int) [][]fr.Element {
 	return M
 }
 
-// GenerateRandomVector generates a vector of size filled with random fr.Elements.
 func GenerateRandomVector(size int) []fr.Element {
 	V := make([]fr.Element, size)
 	for i := 0; i < size; i++ {
@@ -77,7 +73,6 @@ func GenerateRandomVector(size int) []fr.Element {
 	return V
 }
 
-// Transpose transposes a given rows x cols matrix into a cols x rows matrix.
 func Transpose(M [][]fr.Element, rows, cols int) [][]fr.Element {
 	T := make([][]fr.Element, cols)
 	for i := 0; i < cols; i++ {

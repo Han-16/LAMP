@@ -3,7 +3,7 @@ package circuit
 import "github.com/consensys/gnark/frontend"
 
 type Cp struct {
-	CommittedValues [][]frontend.Variable // [L][K]
+	CommittedValues [][]frontend.Variable
 }
 
 func (c *Cp) Define(api frontend.API) error {
