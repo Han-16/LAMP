@@ -3,42 +3,7 @@ package circuit
 import (
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	"github.com/consensys/gnark/frontend"
-	"github.com/consensys/gnark/std/hash/mimc"
 )
-
-func VerifyColumnMerkleProof(
-	api frontend.API,
-	h mimc.MiMC,
-	column []frontend.Variable,
-	root frontend.Variable,
-	merkle_proof []frontend.Variable,
-	index frontend.Variable,
-) error {
-	depth := len(merkle_proof)
-
-	h.Reset()
-	h.Write(column...)
-	h.Sum()
-	leaf := h.Sum()
-
-	proofIndices := api.ToBinary(index, depth)
-
-	hashed := leaf
-	for j := 0; j < depth; j++ {
-		element := merkle_proof[j]
-		bit := proofIndices[j]
-
-		d1 := api.Select(bit, element, hashed)
-		d2 := api.Select(bit, hashed, element)
-
-		h.Reset()
-		h.Write(d1, d2)
-		hashed = h.Sum()
-	}
-
-	api.AssertIsEqual(hashed, root)
-	return nil
-}
 
 func SelectTargetIndex(api frontend.API, array []frontend.Variable, indexBits []frontend.Variable) frontend.Variable {
 	currentLayer := array
