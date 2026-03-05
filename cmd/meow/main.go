@@ -23,9 +23,9 @@ import (
 )
 
 func main() {
-	logKFlag := flag.Int("K", 4, "Log base 2 of K")
+	logKFlag := flag.Int("K", 10, "Log base 2 of K")
 	rhoFlag := flag.String("rho", "1/2", "Code rate")
-	LFlag := flag.Int("L", 3, "Number of unique indices L")
+	LFlag := flag.Int("L", 128, "Number of unique indices L")
 	allFlag := flag.Bool("all", false, "Run benchmarks")
 	flag.Parse()
 
@@ -59,6 +59,9 @@ func runExperiment(logK int, rhoStr string, L int) benchmark.MeowResult {
 
 	fmt.Printf("🔥 [Meow ZK Protocol] K=%d, N=%d, L=%d\n", K, N, L)
 
+	// =========================================================================
+	// 1. 행렬 계산 및 인코딩 준비
+	// =========================================================================
 	startCompute := time.Now()
 	matA := matrix.GenerateRandomMatrix(K, K)
 	matB := matrix.GenerateRandomMatrix(K, K)
@@ -66,8 +69,8 @@ func runExperiment(logK int, rhoStr string, L int) benchmark.MeowResult {
 	computeTime := time.Since(startCompute).Seconds()
 
 	startMatCommit := time.Now()
-	ck1 := crypto.SetupCommitKey(K)      // 행렬용 키 (크기 K)
-	ckScalar := crypto.SetupCommitKey(1) // 스칼라(X, Y, Z)용 키 (크기 1)
+	ck1 := crypto.SetupCommitKey(K)
+	ckScalar := crypto.SetupCommitKey(1)
 	encoder := crypto.NewEncoder(K, N)
 	prover := protocol.NewProver(nil, ck1, encoder)
 
@@ -87,6 +90,9 @@ func runExperiment(logK int, rhoStr string, L int) benchmark.MeowResult {
 	ChallengeR := crypto.GenerateChallengeVector(CmABC, K)
 	matCommitTime := time.Since(startMatCommit).Seconds()
 
+	// =========================================================================
+	// 2. 벡터 계산, 인코딩 및 스칼라 커밋
+	// =========================================================================
 	startVecCommit := time.Now()
 	vecX := matrix.VecMatMul(ChallengeR, matA, K)
 	vecY := matrix.VecMatMul(vecX, matB, K)
@@ -104,6 +110,9 @@ func runExperiment(logK int, rhoStr string, L int) benchmark.MeowResult {
 	indices, _ := crypto.GenerateUniqueIndices(CmXYZ, N, L)
 	vecCommitTime := time.Since(startVecCommit).Seconds()
 
+	// =========================================================================
+	// 3. 서킷 컴파일 및 Setup
+	// =========================================================================
 	fmt.Println("=== Circuit Setup & Prove ===")
 	domainN := fft.NewDomain(uint64(N))
 	rootsN := crypto.GetDomainRoots(domainN, N)
@@ -121,6 +130,7 @@ func runExperiment(logK int, rhoStr string, L int) benchmark.MeowResult {
 		ChallengeR: make([]frontend.Variable, K), Indices: make([]frontend.Variable, L),
 		VecX: make([]frontend.Variable, K), VecY: make([]frontend.Variable, K), VecZ: make([]frontend.Variable, K),
 		EncX: make([]frontend.Variable, N), EncY: make([]frontend.Variable, N), EncZ: make([]frontend.Variable, N),
+		TargetEncX: make([]frontend.Variable, L), TargetEncY: make([]frontend.Variable, L), TargetEncZ: make([]frontend.Variable, L),
 	}
 	for i := 0; i < L; i++ {
 		emptyCircuit.ColsEncA[i] = make([]frontend.Variable, K)
@@ -131,6 +141,9 @@ func runExperiment(logK int, rhoStr string, L int) benchmark.MeowResult {
 	r1csSystem, _ := frontend.Compile(field, r1cs.NewBuilder, emptyCircuit)
 	pk, vk, _ := groth16.Setup(r1csSystem)
 
+	// =========================================================================
+	// 4. 서킷 증명 생성 (Groth16)
+	// =========================================================================
 	assignment := &circuit.MeowCircuit{
 		K: K, N: N, Depth: depth,
 		DomainK: rootsK, WeightsK: weightsK,
@@ -140,6 +153,7 @@ func runExperiment(logK int, rhoStr string, L int) benchmark.MeowResult {
 		ChallengeR: make([]frontend.Variable, K), Indices: make([]frontend.Variable, L),
 		VecX: make([]frontend.Variable, K), VecY: make([]frontend.Variable, K), VecZ: make([]frontend.Variable, K),
 		EncX: make([]frontend.Variable, N), EncY: make([]frontend.Variable, N), EncZ: make([]frontend.Variable, N),
+		TargetEncX: make([]frontend.Variable, L), TargetEncY: make([]frontend.Variable, L), TargetEncZ: make([]frontend.Variable, L),
 	}
 
 	for i := 0; i < K; i++ {
@@ -156,6 +170,10 @@ func runExperiment(logK int, rhoStr string, L int) benchmark.MeowResult {
 
 	for i, idx := range indices {
 		assignment.Indices[i] = idx
+		assignment.TargetEncX[i] = encX[idx]
+		assignment.TargetEncY[i] = encY[idx]
+		assignment.TargetEncZ[i] = encZ[idx]
+
 		assignment.ColsEncA[i] = make([]frontend.Variable, K)
 		assignment.ColsEncB[i] = make([]frontend.Variable, K)
 		assignment.ColsEncC[i] = make([]frontend.Variable, K)
@@ -170,6 +188,7 @@ func runExperiment(logK int, rhoStr string, L int) benchmark.MeowResult {
 	verifier := protocol.NewVerifier(vk, ck1, proverWithPK.CK2)
 
 	startCircuitProve := time.Now()
+	// 💡 원래의 깔끔한 구조로 복구: assignment를 그대로 넘깁니다.
 	circuitProof, cmVec2, blindingsIn, err := proverWithPK.ProveCircuit(r1csSystem, assignment)
 	if err != nil {
 		log.Fatalf("❌ Circuit proof failed: %v", err)
@@ -177,10 +196,25 @@ func runExperiment(logK int, rhoStr string, L int) benchmark.MeowResult {
 	circuitProveTime := time.Since(startCircuitProve).Seconds()
 
 	// =========================================================================
-	// 5. 오프체인 증명 생성 (Gnark 정렬 법칙이 적용된 인덱싱)
+	// 5. 오프체인 증명 생성 (Merkle & CP-LINK)
 	// =========================================================================
 	fmt.Println("=== Generating Off-chain Proofs ===")
 	startOffchainProve := time.Now()
+
+	// 동적 인덱스 매핑: Gnark의 와이어 정렬에 구애받지 않고 길이에 따라 분류
+	var idxK []int
+	var idx1 []int
+	for i, ck := range proverWithPK.CK2 {
+		if len(ck.G) == K {
+			idxK = append(idxK, i)
+		} else if len(ck.G) == 1 {
+			idx1 = append(idx1, i)
+		}
+	}
+
+	if len(idxK) != 3*L || len(idx1) != 3*L {
+		log.Fatalf("❌ Commitment length mismatch: expected %d, got K:%d, 1:%d", 3*L, len(idxK), len(idx1))
+	}
 
 	mpA := make([][]fr.Element, L)
 	mpB := make([][]fr.Element, L)
@@ -204,41 +238,36 @@ func runExperiment(logK int, rhoStr string, L int) benchmark.MeowResult {
 		mpY[i] = proverWithPK.GenerateMembershipProof(treeY, idx, depth)
 		mpZ[i] = proverWithPK.GenerateMembershipProof(treeZ, idx, depth)
 
-		// 🌟 Gnark가 정렬해놓은 커밋 배열의 정확한 위치 (Magic Formula)
-		idxA := i
-		idxB := L + i
-		idxC := 2*L + i
+		idxA := idxK[3*i]
+		idxB := idxK[3*i+1]
+		idxC := idxK[3*i+2]
+		idxX := idx1[3*i]
+		idxY := idx1[3*i+1]
+		idxZ := idx1[3*i+2]
 
-		// xFlat, yFlat, zFlat은 3L, 3L+1, 3L+2에 위치하므로, Target 스칼라값들은 3L+3부터 시작합니다.
-		idxX := 3*L + 3 + 3*i
-		idxY := 3*L + 3 + 3*i + 1
-		idxZ := 3*L + 3 + 3*i + 2
-
-		fmt.Println("Generating CPLink proofs for index", idx)
 		cpA[i] = crypto.ProveCPLink(colsEncA[idx], blA[idx], blindingsIn[idxA], ck1, proverWithPK.CK2[idxA])
-		fmt.Println("apA[i] generated")
 		cpB[i] = crypto.ProveCPLink(colsEncB[idx], blB[idx], blindingsIn[idxB], ck1, proverWithPK.CK2[idxB])
-		fmt.Println("cpB[i] generated")
 		cpC[i] = crypto.ProveCPLink(colsEncC[idx], blC[idx], blindingsIn[idxC], ck1, proverWithPK.CK2[idxC])
-		fmt.Println("cpC[i] generated")
 
 		cpX[i] = crypto.ProveCPLink([]fr.Element{encX[idx]}, blX[idx], blindingsIn[idxX], ckScalar, proverWithPK.CK2[idxX])
-		fmt.Println("cpX[i] generated")
 		cpY[i] = crypto.ProveCPLink([]fr.Element{encY[idx]}, blY[idx], blindingsIn[idxY], ckScalar, proverWithPK.CK2[idxY])
-		fmt.Println("cpY[i] generated")
 		cpZ[i] = crypto.ProveCPLink([]fr.Element{encZ[idx]}, blZ[idx], blindingsIn[idxZ], ckScalar, proverWithPK.CK2[idxZ])
-		fmt.Println("cpZ[i] generated")
 	}
 	offchainProveTime := time.Since(startOffchainProve).Seconds()
 
 	// =========================================================================
-	// 6. 전체 검증
+	// 6. 전체 검증 프로세스
 	// =========================================================================
 	fmt.Println("=== Verifying All Proofs ===")
 	startVerify := time.Now()
 
-	witness, _ := frontend.NewWitness(assignment, field)
-	publicWitness, _ := witness.Public()
+	// 💡 원래의 깔끔한 구조로 복구: 검증을 위해 위트니스를 생성합니다.
+	witness_for_verify, err := frontend.NewWitness(assignment, field)
+	if err != nil {
+		log.Fatalf("❌ Failed to create witness for verification: %v", err)
+	}
+	publicWitness, _ := witness_for_verify.Public()
+
 	if err := verifier.VerifyGroth16(circuitProof, publicWitness); err != nil {
 		log.Fatalf("❌ Groth16 Verify failed: %v", err)
 	}
@@ -263,13 +292,12 @@ func runExperiment(logK int, rhoStr string, L int) benchmark.MeowResult {
 			log.Fatal("❌ Merkle Z Failed")
 		}
 
-		// 🌟 검증할 때도 정확한 매핑 인덱스 사용
-		idxA := i
-		idxB := L + i
-		idxC := 2*L + i
-		idxX := 3*L + 3 + 3*i
-		idxY := 3*L + 3 + 3*i + 1
-		idxZ := 3*L + 3 + 3*i + 2
+		idxA := idxK[3*i]
+		idxB := idxK[3*i+1]
+		idxC := idxK[3*i+2]
+		idxX := idx1[3*i]
+		idxY := idx1[3*i+1]
+		idxZ := idx1[3*i+2]
 
 		if !crypto.VerifyCPLink(leavesA[idx], cmVec2[idxA], cpA[i], ck1, verifier.CK2[idxA]) {
 			log.Fatal("❌ CPLink A Failed")

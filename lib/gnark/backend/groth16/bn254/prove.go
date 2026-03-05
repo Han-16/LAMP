@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"math/big"
 	"runtime"
+	"sync"
 	"time"
 
 	"github.com/consensys/gnark-crypto/ecc"
@@ -28,7 +29,10 @@ import (
 	fcs "github.com/consensys/gnark/frontend/cs"
 )
 
-var HackBlindings []fr.Element
+var (
+	HackBlindings []fr.Element
+	hackMutex     sync.Mutex // protects HackBlindings
+)
 
 // Proof represents a Groth16 proof that was encoded with a ProvingKey and can be verified
 // with a valid statement and a VerifyingKey
@@ -75,21 +79,32 @@ func Prove(r1cs *cs.R1CS, pk *ProvingKey, fullWitness witness.Witness, opts ...b
 	// override hints
 	bsb22ID := solver.GetHintID(fcs.Bsb22CommitmentComputePlaceholder)
 	solverOpts = append(solverOpts, solver.OverrideHint(bsb22ID, func(_ *big.Int, in []*big.Int, out []*big.Int) error {
+
+		// 🔥 [핵심 수정] 힌트가 시작되자마자 Lock을 걸어 HashToFieldFn과 메모리를 보호합니다.
+		hackMutex.Lock()
+		defer hackMutex.Unlock()
+
 		i := int(in[0].Int64())
 		in = in[1:]
 		privateCommittedValues[i] = make([]fr.Element, len(commitmentInfo[i].PrivateCommitted))
 		hashed := in[:len(commitmentInfo[i].PublicAndCommitmentCommitted)]
-		committed := in[+len(hashed):]
+		committed := in[len(hashed):]
 		for j, inJ := range committed {
 			privateCommittedValues[i][j].SetBigInt(inJ)
 		}
 
 		// =========================================================
-		// 🔥 [HACK] Extract blinding factor
+		// [HACK] Extract blinding factor
 		if len(privateCommittedValues[i]) > 0 {
 			bf := privateCommittedValues[i][len(privateCommittedValues[i])-1]
+
+			// 💡 함수 도입부에서 이미 Lock을 걸었으므로 여기 있던 Lock/Unlock은 삭제합니다.
+			for len(HackBlindings) <= i {
+				HackBlindings = append(HackBlindings, fr.Element{})
+			}
+
 			HackBlindings[i] = bf
-			fmt.Printf("[HACK] Extracted Blinding Factor for Commit [%d]: %s\n", i, bf.String())
+			// fmt.Printf("[HACK] Extracted Blinding Factor for Commit [%d]: %s\n", i, bf.String())
 		}
 		// =========================================================
 
@@ -98,9 +113,11 @@ func Prove(r1cs *cs.R1CS, pk *ProvingKey, fullWitness witness.Witness, opts ...b
 			return err
 		}
 
+		// 🛡️ 이제 단일 스레드만 접근하므로 해시 함수가 완벽하게 안전하게 동작합니다.
 		opt.HashToFieldFn.Write(constraint.SerializeCommitment(proof.Commitments[i].Marshal(), hashed, (fr.Bits-1)/8+1))
 		hashBts := opt.HashToFieldFn.Sum(nil)
 		opt.HashToFieldFn.Reset()
+
 		nbBuf := fr.Bytes
 		if opt.HashToFieldFn.Size() < fr.Bytes {
 			nbBuf = opt.HashToFieldFn.Size()

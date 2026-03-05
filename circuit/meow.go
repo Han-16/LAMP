@@ -30,6 +30,10 @@ type MeowCircuit struct {
 	EncX     []frontend.Variable   // [N]
 	EncY     []frontend.Variable   // [N]
 	EncZ     []frontend.Variable   // [N]
+
+	TargetEncX []frontend.Variable // [L]
+	TargetEncY []frontend.Variable // [L]
+	TargetEncZ []frontend.Variable // [L]
 }
 
 func (c *MeowCircuit) Define(api frontend.API) error {
@@ -40,12 +44,11 @@ func (c *MeowCircuit) Define(api frontend.API) error {
 	}
 	L := len(c.Indices)
 
-	// 0. 🚨 [매우 중요] Freivalds 핵심 검증: Y == Z
 	for k := 0; k < c.K; k++ {
 		api.AssertIsEqual(c.VecY[k], c.VecZ[k])
 	}
 
-	// 1. Commit A, B, C & X, Y, Z sequentially (총 6L 개의 내부 커밋 생성)
+	// 1. Commit A, B, C & X, Y, Z sequentially
 	for i := 0; i < L; i++ {
 		committer.Commit(c.ColsEncA[i]...)
 		committer.Commit(c.ColsEncB[i]...)
@@ -53,23 +56,25 @@ func (c *MeowCircuit) Define(api frontend.API) error {
 
 		idxBits := api.ToBinary(c.Indices[i], c.Depth)
 
-		// 위에서 수정한 안전한 SelectTargetIndex 사용
-		targetEncX := SelectTargetIndex(api, c.EncX, idxBits)
-		targetEncY := SelectTargetIndex(api, c.EncY, idxBits)
-		targetEncZ := SelectTargetIndex(api, c.EncZ, idxBits)
+		exprEncX := SelectTargetIndex(api, c.EncX, idxBits)
+		exprEncY := SelectTargetIndex(api, c.EncY, idxBits)
+		exprEncZ := SelectTargetIndex(api, c.EncZ, idxBits)
 
-		committer.Commit(targetEncX)
-		committer.Commit(targetEncY)
-		committer.Commit(targetEncZ)
+		api.AssertIsEqual(exprEncX, c.TargetEncX[i])
+		api.AssertIsEqual(exprEncY, c.TargetEncY[i])
+		api.AssertIsEqual(exprEncZ, c.TargetEncZ[i])
 
-		// 질문자님의 완벽한 수학적 통찰이 반영된 Fold 로직!
-		foldA := Fold(api, c.ChallengeR, c.ColsEncA[i])
+		committer.Commit(c.TargetEncX[i])
+		committer.Commit(c.TargetEncY[i])
+		committer.Commit(c.TargetEncZ[i])
+
+		foldA := Fold(api, c.ChallengeR, c.ColsEncA[i]) // x = r * A
 		foldB := Fold(api, c.VecX, c.ColsEncB[i])       // y = x * B
 		foldC := Fold(api, c.ChallengeR, c.ColsEncC[i]) // z = r * C
 
-		api.AssertIsEqual(foldA, targetEncX)
-		api.AssertIsEqual(foldB, targetEncY)
-		api.AssertIsEqual(foldC, targetEncZ)
+		api.AssertIsEqual(foldA, c.TargetEncX[i])
+		api.AssertIsEqual(foldB, c.TargetEncY[i])
+		api.AssertIsEqual(foldC, c.TargetEncZ[i])
 	}
 
 	// 2. Verify Hashes
