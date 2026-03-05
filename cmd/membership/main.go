@@ -25,7 +25,7 @@ func main() {
 	allFlag := flag.Bool("all", false, "Run benchmarks for K=10..15 and rho=1/2, 1/4")
 	flag.Parse()
 
-	outputDir := filepath.Join(".", "benchmark_results")
+	outputDir := filepath.Join("../../benchmark", "benchmark_results")
 	if err := benchmark.EnsureDir(outputDir); err != nil {
 		log.Fatalf("Failed to create directory: %v", err)
 	}
