@@ -34,46 +34,52 @@ func NewProver(pk groth16.ProvingKey, ck1 crypto.CommitKey, encoder *crypto.Enco
 			for i := 0; i < ckSlice.Len(); i++ {
 				basisField := ckSlice.Index(i).FieldByName("Basis")
 				bases := basisField.Interface().([]bn254.G1Affine)
-				ck2 = append(ck2, crypto.CommitKey{G: bases})
+
+				if len(bases) > 0 {
+					G := bases[:len(bases)-1]
+					H := bases[len(bases)-1]
+					ck2 = append(ck2, crypto.CommitKey{G: G, H: H})
+				}
 			}
 		}
 	}
 
-	return &Prover{
-		PK:      pk,
-		CK1:     ck1,
-		CK2:     ck2,
-		Encoder: encoder,
+	return &Prover{PK: pk, CK1: ck1, CK2: ck2, Encoder: encoder}
+}
+
+func (p *Prover) CommitMatrixBlinded(matrix [][]fr.Element, depth int) ([][]fr.Element, fr.Element, []bn254.G1Affine, []fr.Element) {
+	L := len(matrix)
+	cm := make([]bn254.G1Affine, L)
+	blindings := make([]fr.Element, L)
+	for i := 0; i < L; i++ {
+		blindings[i].SetRandom()
+		cm[i] = crypto.PedersenCommitBlinded(matrix[i], blindings[i], p.CK1)
 	}
+	tree, root := crypto.BuildMerkleTreeFromGroupElements(cm, depth)
+	return tree, root, cm, blindings
 }
 
-// 1. 단일 벡터 Pedersen 커밋 (병렬 처리를 위해 분리)
-func (p *Prover) CommitVector(vector []fr.Element) bn254.G1Affine {
-	return crypto.PedersenCommit(vector, p.CK1)
+func (p *Prover) CommitScalarsBlinded(scalars []fr.Element, depth int, ckScalar crypto.CommitKey) ([][]fr.Element, fr.Element, []bn254.G1Affine, []fr.Element) {
+	L := len(scalars)
+	cm := make([]bn254.G1Affine, L)
+	blindings := make([]fr.Element, L)
+	for i := 0; i < L; i++ {
+		blindings[i].SetRandom()
+		cm[i] = crypto.PedersenCommitBlinded([]fr.Element{scalars[i]}, blindings[i], ckScalar)
+	}
+	tree, root := crypto.BuildMerkleTreeFromGroupElements(cm, depth)
+	return tree, root, cm, blindings
 }
 
-// 2. 그룹 엘리먼트(커밋먼트) 배열로부터 머클 트리 생성 (시간 측정을 위해 분리)
-func (p *Prover) BuildMerkleTree(leaves []bn254.G1Affine, depth int) ([][]fr.Element, fr.Element) {
-	return crypto.BuildMerkleTreeFromGroupElements(leaves, depth)
-}
-
-// 3. Matrix & Merkle Tree 커밋먼트 일괄 생성 (기존 호환용)
-func (p *Prover) CommitMatrix(matrix [][]fr.Element, depth int) ([][]fr.Element, fr.Element, []bn254.G1Affine) {
-	return crypto.CommitMatrix(matrix, p.CK1, depth)
-}
-
-// 4. 멤버십 증명 경로 추출
 func (p *Prover) GenerateMembershipProof(tree [][]fr.Element, idx, depth int) []fr.Element {
 	return crypto.GetMerkleProof(tree, idx, depth)
 }
 
-// 5. Groth16 Prove 및 내부 Blinding Factor 추출
 func (p *Prover) ProveCircuit(r1cs constraint.ConstraintSystem, assignment frontend.Circuit) (groth16.Proof, []bn254.G1Affine, []fr.Element, error) {
 	witness, err := frontend.NewWitness(assignment, ecc.BN254.ScalarField())
 	if err != nil {
 		return nil, nil, nil, err
 	}
-
 	proof, err := groth16.Prove(r1cs, p.PK, witness)
 	if err != nil {
 		return nil, nil, nil, err
@@ -86,24 +92,11 @@ func (p *Prover) ProveCircuit(r1cs constraint.ConstraintSystem, assignment front
 		cmVec2 = commitmentsField.Interface().([]bn254.G1Affine)
 	}
 
+	// 서킷 내부 커밋의 난수(Blinding) 추출
 	blindings := groth16_bn254.HackBlindings
-
 	return proof, cmVec2, blindings, nil
 }
 
-// 6. CP-LINK Schnorr Proof 일괄 생성
-func (p *Prover) ProveCPLink(matrix [][]fr.Element, blindings []fr.Element, L int) []crypto.CPLinkProof {
-	proofs := make([]crypto.CPLinkProof, L)
-	for i := 0; i < L; i++ {
-		proofs[i] = crypto.ProveCPLink(matrix[i], blindings[i], p.CK1, p.CK2[i])
-	}
-	return proofs
-}
-
-// 7. RS Encoding 수행
 func (p *Prover) EncodeMatrix(matrix [][]fr.Element) ([][]fr.Element, [][]fr.Element, error) {
-	if p.Encoder == nil {
-		panic("Encoder is not initialized in Prover")
-	}
 	return p.Encoder.EncodeMatrix(matrix)
 }

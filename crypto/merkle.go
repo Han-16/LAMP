@@ -43,21 +43,24 @@ func GetMerkleProof(tree [][]fr.Element, idx, depth int) []fr.Element {
 	return proof
 }
 
-func CommitMatrix(columns [][]fr.Element, ck CommitKey, depth int) ([][]fr.Element, fr.Element, []bn254.G1Affine) {
+func CommitMatrix(columns [][]fr.Element, ck CommitKey, depth int) ([][]fr.Element, fr.Element, []bn254.G1Affine, []fr.Element) {
 	l := len(columns)
 	commitments := make([]bn254.G1Affine, l)
+	blindings := make([]fr.Element, l)
 
 	var wg sync.WaitGroup
 	for i := 0; i < l; i++ {
+		blindings[i].SetRandom()
+
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			commitments[idx] = PedersenCommit(columns[idx], ck)
+			commitments[idx] = PedersenCommitBlinded(columns[idx], blindings[idx], ck)
 		}(i)
 	}
 	wg.Wait()
 
 	tree, root := BuildMerkleTreeFromGroupElements(commitments, depth)
 
-	return tree, root, commitments
+	return tree, root, commitments, blindings
 }

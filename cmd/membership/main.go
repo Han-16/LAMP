@@ -83,17 +83,22 @@ func runExperiment(logK int, rhoStr string, L int) benchmark.MembershipResult {
 	columnsNxK := matrix.Transpose(matrixKxN, K, N)
 
 	// =========================================================================
-	// 2. 시간 분리 측정 1: Pedersen Commitments (병렬 처리)
+	// 2. 시간 분리 측정 1: Pedersen Commitments (병렬 처리 + 난수 적용)
 	// =========================================================================
-	fmt.Println("=== 1. Generating Pedersen Commitments ===")
+	fmt.Println("=== 1. Generating Blinded Pedersen Commitments ===")
 	startPed := time.Now()
+
 	commitments := make([]bn254.G1Affine, N)
+	blindings := make([]fr.Element, N) // 블라인딩 팩터 배열
+
 	var wg sync.WaitGroup
 	for i := 0; i < N; i++ {
+		blindings[i].SetRandom() // 각 열마다 난수 생성
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			commitments[idx] = prover.CommitVector(columnsNxK[idx])
+			// 블라인딩 팩터를 주입하여 커밋
+			commitments[idx] = crypto.PedersenCommitBlinded(columnsNxK[idx], blindings[idx], ck)
 		}(i)
 	}
 	wg.Wait()
@@ -104,7 +109,7 @@ func runExperiment(logK int, rhoStr string, L int) benchmark.MembershipResult {
 	// =========================================================================
 	fmt.Println("=== 2. Building Merkle Tree ===")
 	startTree := time.Now()
-	tree, cm := prover.BuildMerkleTree(commitments, depth)
+	tree, cm := crypto.BuildMerkleTreeFromGroupElements(commitments, depth)
 	treeTime := time.Since(startTree).Seconds()
 
 	indices, err := crypto.GenerateUniqueIndices(cm, N, L)

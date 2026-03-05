@@ -53,20 +53,34 @@ func runExperiment(logK int, rhoStr string) benchmark.ReedSolomonResult {
 		N = K << 2
 	}
 
-	fmt.Printf("🔥 [RS] K = 2^%d (%d), N = %d, rho = %s\n", logK, K, N, rhoStr)
+	fmt.Printf("🔥 [RS Dual Barycentric] K = 2^%d (%d), N = %d, rho = %s\n", logK, K, N, rhoStr)
 
 	field := ecc.BN254.ScalarField()
 
-	// Precompute
+	// =========================================================================
+	// Precompute (K 도메인과 N 도메인 모두 계산)
+	// =========================================================================
 	startPre := time.Now()
+
+	// K 도메인 셋업
+	domainK := fft.NewDomain(uint64(K))
+	rootsK := crypto.GetDomainRoots(domainK, K)
+	weightsK := crypto.PrecomputeBarycentricWeights(rootsK)
+
+	// N 도메인 셋업
 	domainN := fft.NewDomain(uint64(N))
 	rootsN := crypto.GetDomainRoots(domainN, N)
 	weightsN := crypto.PrecomputeBarycentricWeights(rootsN)
+
 	preTime := time.Since(startPre).Seconds()
 
+	// =========================================================================
 	// Circuit Setup
+	// =========================================================================
 	emptyCircuit := &circuit.RSCircuit{
-		K: K, N: N, DomainN: rootsN, WeightsN: weightsN,
+		K: K, N: N,
+		DomainK: rootsK, WeightsK: weightsK, // 🌟 K 도메인 추가
+		DomainN: rootsN, WeightsN: weightsN,
 		Message: make([]frontend.Variable, K), CodewordValues: make([]frontend.Variable, N),
 	}
 	r1csCircuit, _ := frontend.Compile(field, r1cs.NewBuilder, emptyCircuit)
@@ -76,32 +90,38 @@ func runExperiment(logK int, rhoStr string) benchmark.ReedSolomonResult {
 	prover := protocol.NewProver(pk, crypto.CommitKey{}, crypto.NewEncoder(K, N))
 	verifier := protocol.NewVerifier(vk, crypto.CommitKey{}, nil)
 
+	// =========================================================================
 	// 1. Encoding (Prover 활용)
+	// =========================================================================
 	startEnc := time.Now()
 	x := make([]fr.Element, K)
 	for j := 0; j < K; j++ {
 		x[j].SetRandom()
 	}
 
-	coeffs, enc, err := prover.Encoder.Encode(x)
+	_, enc, err := prover.Encoder.Encode(x)
 	if err != nil {
 		log.Fatalf("Encoding failed: %v", err)
 	}
 	encTime := time.Since(startEnc).Seconds()
 
+	// =========================================================================
 	// 2. Prove Circuit (Prover 활용)
-	assignCoeffs := make([]frontend.Variable, K)
+	// =========================================================================
+	assignMessage := make([]frontend.Variable, K)
 	assignEncoded := make([]frontend.Variable, N)
 	for j := 0; j < K; j++ {
-		assignCoeffs[j] = coeffs[j]
+		assignMessage[j] = x[j]
 	}
 	for j := 0; j < N; j++ {
 		assignEncoded[j] = enc[j]
 	}
 
 	assignment := &circuit.RSCircuit{
-		K: K, N: N, DomainN: rootsN, WeightsN: weightsN,
-		Message: assignCoeffs, CodewordValues: assignEncoded,
+		K: K, N: N,
+		DomainK: rootsK, WeightsK: weightsK,
+		DomainN: rootsN, WeightsN: weightsN,
+		Message: assignMessage, CodewordValues: assignEncoded,
 	}
 
 	startProve := time.Now()
@@ -111,7 +131,9 @@ func runExperiment(logK int, rhoStr string) benchmark.ReedSolomonResult {
 	}
 	proveTime := time.Since(startProve).Seconds()
 
+	// =========================================================================
 	// 3. Verify Circuit (Verifier 활용)
+	// =========================================================================
 	startVerify := time.Now()
 	witness, _ := frontend.NewWitness(assignment, field)
 	publicWitness, _ := witness.Public()
@@ -128,7 +150,7 @@ func runExperiment(logK int, rhoStr string) benchmark.ReedSolomonResult {
 		Precompute:  preTime,
 		Encoding:    encTime,
 		Constraints: r1csCircuit.GetNbConstraints(),
-		Setup:       0, // Setup 측정 시간 원할 시 추가 가능
+		Setup:       0,
 		Prove:       proveTime,
 		Verify:      verifyTime,
 	}

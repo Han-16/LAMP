@@ -8,6 +8,9 @@ import (
 type RSCircuit struct {
 	K, N int
 
+	DomainK  []fr.Element
+	WeightsK []fr.Element
+
 	DomainN  []fr.Element // Roots of unity for the evaluation domain of size N (w^i)
 	WeightsN []fr.Element // Barycentric weights for the evaluation domain of size N (\lambda_i)
 
@@ -28,14 +31,7 @@ func (c *RSCircuit) Define(api frontend.API) error {
 	}
 
 	VerifyRSEncoding(
-		api,
-		c.K,
-		c.N,
-		c.DomainN,
-		c.WeightsN,
-		c.Message,
-		c.CodewordValues,
-		z,
+		api, c.K, c.N, c.DomainK, c.WeightsK, c.DomainN, c.WeightsN, c.Message, c.CodewordValues, z,
 	)
 
 	return nil

@@ -72,47 +72,50 @@ func Fold(api frontend.API, lhs, rhs []frontend.Variable) frontend.Variable {
 	return acc
 }
 
-// VerifyRSEncoding verifies if a single codeword is a valid Reed-Solomon encoding of the given message coefficients.
 func VerifyRSEncoding(
 	api frontend.API,
 	k, n int,
-	domainN []fr.Element,
-	weightsN []fr.Element,
-	messageCoeffs []frontend.Variable,
-	codewordValues []frontend.Variable,
+	domainK, weightsK []fr.Element, // K 도메인 정보 추가
+	domainN, weightsN []fr.Element, // N 도메인 정보
+	vecValues []frontend.Variable, // [K] 원본 평가값 (VecX)
+	encValues []frontend.Variable, // [N] 코드워드 (EncX)
 	z frontend.Variable,
 ) {
-	// Step 1: Evaluate f(z)
-	// Compute v1 = f(z) = \sum_{i=0}^{k-1} a_i z^i using Horner's method
-	v1 := messageCoeffs[k-1]
-	for i := k - 2; i >= 0; i-- {
-		// v1 = v1 * z + a_i
-		v1 = api.Add(api.Mul(v1, z), messageCoeffs[i])
-	}
+	// Step 1: K 도메인 위에서 Barycentric 공식으로 f(z) 계산
+	numK := frontend.Variable(0) // 분자
+	denK := frontend.Variable(0) // 분모
 
-	// Step 2: Evaluate g(z) via Barycentric Formula (Rational Form)
-	numeratorSum := frontend.Variable(0)   // 분자 합계 누적
-	denominatorSum := frontend.Variable(0) // 분모 합계 누적
-
-	for i := 0; i < n; i++ {
-		// z - w^i
-		zMinusW := api.Sub(z, domainN[i])
-		// 1 / (z - w^i)
+	for i := 0; i < k; i++ {
+		zMinusW := api.Sub(z, domainK[i])
 		invZMinusW := api.Inverse(zMinusW)
 
-		// \lambda_i / (z - w^i)
-		term := api.Mul(weightsN[i], invZMinusW)
+		term := api.Mul(weightsK[i], invZMinusW) // \lambda_{K,i} / (z - w_K^i)
+		denK = api.Add(denK, term)
 
-		// 분모에 누적
-		denominatorSum = api.Add(denominatorSum, term)
+		numTerm := api.Mul(term, vecValues[i])
+		numK = api.Add(numK, numTerm)
+	}
 
-		// 분자에 누적: (\lambda_i / (z - w^i)) * c_i
-		numTerm := api.Mul(term, codewordValues[i])
-		numeratorSum = api.Add(numeratorSum, numTerm)
+	// Step 2: N 도메인 위에서 Barycentric 공식으로 g(z) 계산
+	numN := frontend.Variable(0)
+	denN := frontend.Variable(0)
+
+	for i := 0; i < n; i++ {
+		zMinusW := api.Sub(z, domainN[i])
+		invZMinusW := api.Inverse(zMinusW)
+
+		term := api.Mul(weightsN[i], invZMinusW) // \lambda_{N,i} / (z - w_N^i)
+		denN = api.Add(denN, term)
+
+		numTerm := api.Mul(term, encValues[i])
+		numN = api.Add(numN, numTerm)
 	}
 
 	// Step 3: Decision
-	// if v1 == v2 then Accept
-	lhs := api.Mul(v1, denominatorSum)
-	api.AssertIsEqual(lhs, numeratorSum)
+	// (numK / denK) == (numN / denN) 인지 확인
+	// 나눗셈을 피하기 위해 Cross-multiplication(교차 곱)으로 증명: numK * denN == numN * denK
+	lhs := api.Mul(numK, denN)
+	rhs := api.Mul(numN, denK)
+
+	api.AssertIsEqual(lhs, rhs)
 }
