@@ -33,18 +33,18 @@ func initCSV(filename string, header []string) (*os.File, *csv.Writer) {
 
 func appendCSV(writer *csv.Writer, record []string, successLog string) {
 	if err := writer.Write(record); err != nil {
-		log.Printf("⚠️ Failed to write record to CSV: %v", err)
+		log.Printf("⚠️ Failed to write result record to CSV: %v", err)
 	}
 	writer.Flush()
 
 	if err := writer.Error(); err != nil {
 		log.Printf("⚠️ Error flushing csv writer: %v", err)
 	} else {
-		fmt.Printf("💾 Result saved to CSV: %s\n", successLog)
+		fmt.Printf("💾 Result saved to CSV: %s\n\n\n", successLog)
 	}
 }
 
-type ReedSolomonResult struct { // RS Benchmark
+type ReedSolomonResult struct {
 	LogK        int
 	Rho         string
 	Precompute  float64
@@ -85,9 +85,24 @@ type FreivaldsResult struct {
 	VerifyTime  float64
 }
 
-// =============================================================================
-// 3. 실험별 CSV 입출력 구현부 (API)
-// =============================================================================
+type MeowResult struct {
+	LogK             int
+	Rho              string
+	N                int
+	NumQueries       int // L
+	Constraints      int
+	ComputeTime      float64
+	MatrixCommitTime float64
+	VectorCommitTime float64
+	CircuitProveTime float64
+	CPLinkProveTime  float64
+	TotalProveTime   float64
+	TotalVerifyTime  float64
+	MerkleProofSize  int
+	Groth16ProofSize int
+	CPLinkProofSize  int
+	TotalProofSize   int
+}
 
 // --- RS Benchmark ---
 func InitCSV(filename string) (*os.File, *csv.Writer) {
@@ -166,28 +181,12 @@ func AppendFreivaldsResultToCSV(writer *csv.Writer, res FreivaldsResult) {
 	appendCSV(writer, record, fmt.Sprintf("logK=%d", res.LogK))
 }
 
-// -----------------------------------------------------------------------------
-// [추가됨] Meow (Brakedown + CC-SNARK) 벤치마크
-// -----------------------------------------------------------------------------
-type MeowResult struct {
-	LogK             int
-	Rho              string
-	N                int
-	NumQueries       int     // L
-	ComputeTime      float64 // C = A * B 계산 시간
-	MatrixCommitTime float64 // A, B, C 인코딩 및 머클트리 생성 시간
-	VectorCommitTime float64 // x, y, z 생성, 인코딩 및 머클트리 생성 시간
-	CircuitProveTime float64 // Groth16 서킷 증명 시간
-	CPLinkProveTime  float64 // 3*L 개의 CP-LINK 증명 시간
-	TotalProveTime   float64 // CircuitProveTime + CPLinkProveTime
-	TotalVerifyTime  float64 // Merkle + Groth16 + CPLink 전체 검증 시간
-}
-
 func InitMeowCSV(filename string) (*os.File, *csv.Writer) {
 	return initCSV(filename, []string{
-		"LogK", "Rho", "N", "NumQueries", "ComputeTime(s)",
-		"MatrixCommitTime(s)", "VectorCommitTime(s)", "CircuitProveTime(s)",
+		"LogK", "Rho", "N", "NumQueries", "Constraints",
+		"ComputeTime(s)", "MatrixCommitTime(s)", "VectorCommitTime(s)", "CircuitProveTime(s)",
 		"CPLinkProveTime(s)", "TotalProveTime(s)", "TotalVerifyTime(s)",
+		"MerkleProofSize(B)", "Groth16ProofSize(B)", "CPLinkProofSize(B)", "TotalProofSize(B)",
 	})
 }
 
@@ -197,6 +196,7 @@ func AppendMeowResultToCSV(writer *csv.Writer, res MeowResult) {
 		res.Rho,
 		strconv.Itoa(res.N),
 		strconv.Itoa(res.NumQueries),
+		strconv.Itoa(res.Constraints),
 		fmt.Sprintf("%.6f", res.ComputeTime),
 		fmt.Sprintf("%.6f", res.MatrixCommitTime),
 		fmt.Sprintf("%.6f", res.VectorCommitTime),
@@ -204,6 +204,10 @@ func AppendMeowResultToCSV(writer *csv.Writer, res MeowResult) {
 		fmt.Sprintf("%.6f", res.CPLinkProveTime),
 		fmt.Sprintf("%.6f", res.TotalProveTime),
 		fmt.Sprintf("%.6f", res.TotalVerifyTime),
+		strconv.Itoa(res.MerkleProofSize),
+		strconv.Itoa(res.Groth16ProofSize),
+		strconv.Itoa(res.CPLinkProofSize),
+		strconv.Itoa(res.TotalProofSize),
 	}
-	appendCSV(writer, record, fmt.Sprintf("Meow Protocol: logK=%d, rho=%s, L=%d", res.LogK, res.Rho, res.NumQueries))
+	appendCSV(writer, record, fmt.Sprintf("Meow Protocol: logK=%d, rho=%s, L=%d, constraints=%d", res.LogK, res.Rho, res.NumQueries, res.Constraints))
 }

@@ -22,10 +22,11 @@ import (
 func main() {
 	logKFlag := flag.Int("K", 10, "Log base 2 of K (Matrix dimension KxK, e.g., 4 for K=16)")
 	allFlag := flag.Bool("all", false, "Run benchmarks for K=4..10")
+	// 💡 컴파일 전용 플래그 추가
+	onlyCompileFlag := flag.Bool("OnlyCompile", false, "Only compile the circuit to get constraints without generating matrices or proofs")
 	flag.Parse()
 
-	// 1. 안전한 벤치마크 디렉토리 및 CSV 파일 초기화
-	outputDir := filepath.Join(".", "benchmark_results")
+	outputDir := filepath.Join("../../benchmark", "benchmark_results")
 	if err := benchmark.EnsureDir(outputDir); err != nil {
 		log.Fatalf("Failed to create directory: %v", err)
 	}
@@ -35,25 +36,65 @@ func main() {
 	defer file.Close()
 
 	if *allFlag {
-		fmt.Println("🚀 [ALL MODE] Running benchmarks: K from 2^4 to 2^10")
-		for logK := 4; logK <= 10; logK++ {
-			res := runExperiment(logK)
+		if *onlyCompileFlag {
+			fmt.Println("🚀 [OnlyCompile MODE] Checking constraints for K from 2^5 to 2^15")
+		} else {
+			fmt.Println("🚀 [ALL MODE] Running benchmarks: K from 2^5 to 2^15")
+		}
+
+		for logK := 5; logK <= 15; logK++ {
+			res := runExperiment(logK, *onlyCompileFlag)
+			// 💡 OnlyCompile 모드 여부와 상관없이 항상 CSV에 기록
 			benchmark.AppendFreivaldsResultToCSV(writer, res)
 			fmt.Println("----------------------------------------------------------------")
 		}
 	} else {
-		res := runExperiment(*logKFlag)
+		res := runExperiment(*logKFlag, *onlyCompileFlag)
+		// 💡 단일 모드일 때도 항상 CSV에 기록
 		benchmark.AppendFreivaldsResultToCSV(writer, res)
 	}
 
 	fmt.Println("🎉 All Freivalds benchmarks finished!")
 }
 
-func runExperiment(logK int) benchmark.FreivaldsResult {
+func runExperiment(logK int, onlyCompile bool) benchmark.FreivaldsResult {
 	K := 1 << logK
 	field := ecc.BN254.ScalarField()
 
 	fmt.Printf("🔥 [Freivalds] K = 2^%d (%d x %d Matrix)\n", logK, K, K)
+
+	// =========================================================================
+	// 💡 [OnlyCompile 모드] 무거운 O(K^3) 행렬 연산과 Setup을 스킵하고 컴파일만 수행
+	// =========================================================================
+	if onlyCompile {
+		fmt.Println("=== 🔍 Compiling Circuit for Constraints ===")
+
+		emptyCircuit := &circuit.FreivaldsCircuit{
+			A: make([][]frontend.Variable, K),
+			B: make([][]frontend.Variable, K),
+			C: make([][]frontend.Variable, K),
+			K: K,
+		}
+		for i := 0; i < K; i++ {
+			emptyCircuit.A[i] = make([]frontend.Variable, K)
+			emptyCircuit.B[i] = make([]frontend.Variable, K)
+			emptyCircuit.C[i] = make([]frontend.Variable, K)
+		}
+
+		r1csSystem, err := frontend.Compile(field, r1cs.NewBuilder, emptyCircuit)
+		if err != nil {
+			log.Fatalf("❌ Circuit compilation failed: %v", err)
+		}
+
+		nbConstraints := r1csSystem.GetNbConstraints()
+		fmt.Printf("✅ Circuit compiled successfully! Total Constraints: %d\n", nbConstraints)
+
+		// 💡 반환되는 결과 객체에 LogK와 계산된 Constraints만 담아서 넘깁니다. (나머지는 0)
+		return benchmark.FreivaldsResult{
+			LogK:        logK,
+			Constraints: nbConstraints,
+		}
+	}
 
 	// =========================================================================
 	// 1. Data Preparation & Compute C = A * B
@@ -96,6 +137,8 @@ func runExperiment(logK int) benchmark.FreivaldsResult {
 		log.Fatalf("❌ Groth16 setup failed: %v", err)
 	}
 	setupTime := time.Since(startSetup).Seconds()
+
+	// 💡 일반 벤치마크 모드에서도 Constraints 수를 추출합니다.
 	numConstraints := r1csSystem.GetNbConstraints()
 	fmt.Printf("   📊 Constraints: %d\n", numConstraints)
 
