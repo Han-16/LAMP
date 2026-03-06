@@ -87,7 +87,7 @@ func runExperiment(logK int, onlyCompile bool) benchmark.FreivaldsResult {
 		}
 
 		nbConstraints := r1csSystem.GetNbConstraints()
-		fmt.Printf("✅ Circuit compiled successfully! Total Constraints: %d\n\n", nbConstraints)
+		fmt.Printf("✅ Circuit compiled successfully! Total Constraints: %d\n", nbConstraints)
 
 		// 💡 반환되는 결과 객체에 LogK와 계산된 Constraints만 담아서 넘깁니다. (나머지는 0)
 		return benchmark.FreivaldsResult{
