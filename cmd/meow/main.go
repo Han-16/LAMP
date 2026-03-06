@@ -117,7 +117,7 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.M
 	matA := matrix.GenerateRandomMatrix(K, K)
 	matB := matrix.GenerateRandomMatrix(K, K)
 	matC := matrix.MatMul(matA, matB, K)
-	computeTime := time.Since(startCompute).Seconds()
+	MatrixComputeTime := time.Since(startCompute).Seconds()
 
 	startMatCommit := time.Now()
 	ck1 := crypto.SetupCommitKey(K)
@@ -380,21 +380,21 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.M
 		groth16ProofSize, merkleProofSize, cpLinkProofSize, totalProofSize)
 
 	return benchmark.MeowResult{
-		LogK:             logK,
-		Rho:              rhoStr,
-		N:                N,
-		NumQueries:       L,
-		Constraints:      nbConstraints,
-		ComputeTime:      computeTime,
-		MatrixCommitTime: matCommitTime,
-		VectorCommitTime: vecCommitTime,
-		CircuitProveTime: circuitProveTime,
-		CPLinkProveTime:  offlineProveTime,
-		TotalProveTime:   totalProveTime,
-		TotalVerifyTime:  totalVerifyTime,
-		MerkleProofSize:  merkleProofSize,
-		Groth16ProofSize: groth16ProofSize,
-		CPLinkProofSize:  cpLinkProofSize,
-		TotalProofSize:   totalProofSize,
+		LogK:              logK,
+		Rho:               rhoStr,
+		N:                 N,
+		NumQueries:        L,
+		Constraints:       nbConstraints,
+		MatrixComputeTime: MatrixComputeTime,
+		MatrixCommitTime:  matCommitTime,
+		VectorCommitTime:  vecCommitTime,
+		CircuitProveTime:  circuitProveTime,
+		CPLinkProveTime:   offlineProveTime,
+		TotalProveTime:    totalProveTime,
+		TotalVerifyTime:   totalVerifyTime,
+		MerkleProofSize:   merkleProofSize,
+		Groth16ProofSize:  groth16ProofSize,
+		CPLinkProofSize:   cpLinkProofSize,
+		TotalProofSize:    totalProofSize,
 	}
 }

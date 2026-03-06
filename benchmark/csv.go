@@ -86,22 +86,22 @@ type FreivaldsResult struct {
 }
 
 type MeowResult struct {
-	LogK             int
-	Rho              string
-	N                int
-	NumQueries       int // L
-	Constraints      int
-	ComputeTime      float64
-	MatrixCommitTime float64
-	VectorCommitTime float64
-	CircuitProveTime float64
-	CPLinkProveTime  float64
-	TotalProveTime   float64
-	TotalVerifyTime  float64
-	MerkleProofSize  int
-	Groth16ProofSize int
-	CPLinkProofSize  int
-	TotalProofSize   int
+	LogK              int
+	Rho               string
+	N                 int
+	NumQueries        int // L
+	Constraints       int
+	MatrixComputeTime float64
+	MatrixCommitTime  float64
+	VectorCommitTime  float64
+	CircuitProveTime  float64
+	CPLinkProveTime   float64
+	TotalProveTime    float64
+	TotalVerifyTime   float64
+	MerkleProofSize   int
+	Groth16ProofSize  int
+	CPLinkProofSize   int
+	TotalProofSize    int
 }
 
 // --- RS Benchmark ---
@@ -184,7 +184,7 @@ func AppendFreivaldsResultToCSV(writer *csv.Writer, res FreivaldsResult) {
 func InitMeowCSV(filename string) (*os.File, *csv.Writer) {
 	return initCSV(filename, []string{
 		"LogK", "Rho", "N", "NumQueries", "Constraints",
-		"ComputeTime(s)", "MatrixCommitTime(s)", "VectorCommitTime(s)", "CircuitProveTime(s)",
+		"MatrixComputeTime(s)", "MatrixCommitTime(s)", "VectorCommitTime(s)", "CircuitProveTime(s)",
 		"CPLinkProveTime(s)", "TotalProveTime(s)", "TotalVerifyTime(s)",
 		"MerkleProofSize(B)", "Groth16ProofSize(B)", "CPLinkProofSize(B)", "TotalProofSize(B)",
 	})
@@ -197,7 +197,7 @@ func AppendMeowResultToCSV(writer *csv.Writer, res MeowResult) {
 		strconv.Itoa(res.N),
 		strconv.Itoa(res.NumQueries),
 		strconv.Itoa(res.Constraints),
-		fmt.Sprintf("%.6f", res.ComputeTime),
+		fmt.Sprintf("%.6f", res.MatrixComputeTime),
 		fmt.Sprintf("%.6f", res.MatrixCommitTime),
 		fmt.Sprintf("%.6f", res.VectorCommitTime),
 		fmt.Sprintf("%.6f", res.CircuitProveTime),
