@@ -33,14 +33,14 @@ func initCSV(filename string, header []string) (*os.File, *csv.Writer) {
 
 func appendCSV(writer *csv.Writer, record []string, successLog string) {
 	if err := writer.Write(record); err != nil {
-		log.Printf("⚠️ Failed to write record to CSV: %v", err)
+		log.Printf("⚠️ Failed to write result record to CSV: %v", err)
 	}
 	writer.Flush()
 
 	if err := writer.Error(); err != nil {
 		log.Printf("⚠️ Error flushing csv writer: %v", err)
 	} else {
-		fmt.Printf("💾 Result saved to CSV: %s\n", successLog)
+		fmt.Printf("💾 Result saved to CSV: %s\n\n\n", successLog)
 	}
 }
 
