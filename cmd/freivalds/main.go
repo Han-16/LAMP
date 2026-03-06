@@ -106,8 +106,8 @@ func runExperiment(logK int, onlyCompile bool) benchmark.FreivaldsResult {
 	startCompute := time.Now()
 	// Matrix 연산 패키지의 MatMul 활용 (O(K^3))
 	matC := matrix.MatMul(matA, matB, K)
-	computeTime := time.Since(startCompute).Seconds()
-	fmt.Printf("   ✅ Compute Time: %.6f s\n", computeTime)
+	matrixComputeTime := time.Since(startCompute).Seconds()
+	fmt.Printf("   ✅ Matrix Compute Time: %.6f s\n", matrixComputeTime)
 
 	// =========================================================================
 	// 2. Circuit Setup (Compile & Groth16 Setup)
@@ -197,11 +197,11 @@ func runExperiment(logK int, onlyCompile bool) benchmark.FreivaldsResult {
 	fmt.Printf("   ✅ Verify Time: %.6f s\n", verifyTime)
 
 	return benchmark.FreivaldsResult{
-		LogK:        logK,
-		Compute:     computeTime,
-		Constraints: numConstraints,
-		SetupTime:   setupTime,
-		ProveTime:   proveTime,
-		VerifyTime:  verifyTime,
+		LogK:              logK,
+		MatrixComputeTime: matrixComputeTime,
+		Constraints:       numConstraints,
+		SetupTime:         setupTime,
+		ProveTime:         proveTime,
+		VerifyTime:        verifyTime,
 	}
 }

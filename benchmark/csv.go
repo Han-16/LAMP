@@ -77,12 +77,12 @@ type CpLinkResult struct {
 }
 
 type FreivaldsResult struct {
-	LogK        int
-	Compute     float64
-	Constraints int
-	SetupTime   float64
-	ProveTime   float64
-	VerifyTime  float64
+	LogK              int
+	MatrixComputeTime float64
+	Constraints       int
+	SetupTime         float64
+	ProveTime         float64
+	VerifyTime        float64
 }
 
 type MeowResult struct {
@@ -97,6 +97,9 @@ type MeowResult struct {
 	CircuitProveTime  float64
 	CPLinkProveTime   float64
 	TotalProveTime    float64
+	CircuitVerifyTime float64
+	MerkleVerifyTime  float64
+	CPLinkVerifyTime  float64
 	TotalVerifyTime   float64
 	MerkleProofSize   int
 	Groth16ProofSize  int
@@ -165,14 +168,14 @@ func AppendCpLinkResultToCSV(writer *csv.Writer, res CpLinkResult) {
 // --- Freivalds Benchmark ---
 func InitFreivaldsCSV(filename string) (*os.File, *csv.Writer) {
 	return initCSV(filename, []string{
-		"log(K)", "Compute (s)", "Constraint", "Setup (s)", "Prove (s)", "Verify (s)",
+		"log(K)", "MatrixComputeTime (s)", "Constraint", "Setup (s)", "Prove (s)", "Verify (s)",
 	})
 }
 
 func AppendFreivaldsResultToCSV(writer *csv.Writer, res FreivaldsResult) {
 	record := []string{
 		strconv.Itoa(res.LogK),
-		fmt.Sprintf("%.3f", res.Compute),
+		fmt.Sprintf("%.3f", res.MatrixComputeTime),
 		strconv.Itoa(res.Constraints),
 		fmt.Sprintf("%.3f", res.SetupTime),
 		fmt.Sprintf("%.3f", res.ProveTime),
@@ -185,7 +188,8 @@ func InitMeowCSV(filename string) (*os.File, *csv.Writer) {
 	return initCSV(filename, []string{
 		"LogK", "Rho", "N", "NumQueries", "Constraints",
 		"MatrixComputeTime(s)", "MatrixCommitTime(s)", "VectorCommitTime(s)", "CircuitProveTime(s)",
-		"CPLinkProveTime(s)", "TotalProveTime(s)", "TotalVerifyTime(s)",
+		"CPLinkProveTime(s)", "TotalProveTime(s)",
+		"CircuitVerifyTime(s)", "MerkleVerifyTime(s)", "CPLinkVerifyTime(s)", "TotalVerifyTime(s)",
 		"MerkleProofSize(B)", "Groth16ProofSize(B)", "CPLinkProofSize(B)", "TotalProofSize(B)",
 	})
 }
@@ -203,6 +207,9 @@ func AppendMeowResultToCSV(writer *csv.Writer, res MeowResult) {
 		fmt.Sprintf("%.6f", res.CircuitProveTime),
 		fmt.Sprintf("%.6f", res.CPLinkProveTime),
 		fmt.Sprintf("%.6f", res.TotalProveTime),
+		fmt.Sprintf("%.6f", res.CircuitVerifyTime),
+		fmt.Sprintf("%.6f", res.MerkleVerifyTime),
+		fmt.Sprintf("%.6f", res.CPLinkVerifyTime),
 		fmt.Sprintf("%.6f", res.TotalVerifyTime),
 		strconv.Itoa(res.MerkleProofSize),
 		strconv.Itoa(res.Groth16ProofSize),

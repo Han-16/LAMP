@@ -307,11 +307,17 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.M
 	}
 	publicWitness, _ := witness_for_verify.Public()
 
+	startCircuitVerify := time.Now()
 	if err := verifier.VerifyGroth16(circuitProof, publicWitness); err != nil {
 		log.Fatalf("❌ Groth16 Verify failed: %v", err)
 	}
+	circuitVerifyTime := time.Since(startCircuitVerify).Seconds()
+
+	var merkleVerifyTime float64
+	var cpLinkVerifyTime float64
 
 	for i, idx := range indices {
+		startMerkle := time.Now()
 		if !verifier.VerifyMembership(cmA, leavesA[idx], mpA[i], idx, depth) {
 			log.Fatal("❌ Merkle A Failed")
 		}
@@ -324,9 +330,10 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.M
 		if !verifier.VerifyMembership(cmX, leavesX[idx], mpX[i], idx, depth) {
 			log.Fatal("❌ Merkle X Failed")
 		}
-		if !verifier.VerifyMembership(cmYZ, leavesYZ[idx], mpYZ[i], idx, depth) { // 💡
+		if !verifier.VerifyMembership(cmYZ, leavesYZ[idx], mpYZ[i], idx, depth) {
 			log.Fatal("❌ Merkle YZ Failed")
 		}
+		merkleVerifyTime += time.Since(startMerkle).Seconds()
 
 		idxA := idxK[3*i]
 		idxB := idxK[3*i+1]
@@ -334,6 +341,7 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.M
 		idxX := idx1[2*i]
 		idxYZ := idx1[2*i+1]
 
+		startCpLink := time.Now()
 		if !crypto.VerifyCPLink(leavesA[idx], cmVec2[idxA], cpA[i], ck1, verifier.CK2[idxA]) {
 			log.Fatal("❌ CPLink A Failed")
 		}
@@ -346,9 +354,10 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.M
 		if !crypto.VerifyCPLink(leavesX[idx], cmVec2[idxX], cpX[i], ckScalar, verifier.CK2[idxX]) {
 			log.Fatal("❌ CPLink X Failed")
 		}
-		if !crypto.VerifyCPLink(leavesYZ[idx], cmVec2[idxYZ], cpYZ[i], ckScalar, verifier.CK2[idxYZ]) { // 💡
+		if !crypto.VerifyCPLink(leavesYZ[idx], cmVec2[idxYZ], cpYZ[i], ckScalar, verifier.CK2[idxYZ]) {
 			log.Fatal("❌ CPLink YZ Failed")
 		}
+		cpLinkVerifyTime += time.Since(startCpLink).Seconds()
 	}
 	totalVerifyTime := time.Since(startVerify).Seconds()
 	fmt.Println("✅ ALL BLINDED ZK PROOFS VERIFIED SUCCESSFULLY!")
@@ -371,7 +380,7 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.M
 		cpLinkProofSize += 128 + (len(cpC[i].Z) * 32)
 
 		cpLinkProofSize += 128 + (len(cpX[i].Z) * 32)
-		cpLinkProofSize += 128 + (len(cpYZ[i].Z) * 32) // 💡
+		cpLinkProofSize += 128 + (len(cpYZ[i].Z) * 32)
 	}
 
 	totalProofSize := groth16ProofSize + merkleProofSize + cpLinkProofSize
@@ -391,6 +400,9 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.M
 		CircuitProveTime:  circuitProveTime,
 		CPLinkProveTime:   offlineProveTime,
 		TotalProveTime:    totalProveTime,
+		CircuitVerifyTime: circuitVerifyTime,
+		MerkleVerifyTime:  merkleVerifyTime,
+		CPLinkVerifyTime:  cpLinkVerifyTime,
 		TotalVerifyTime:   totalVerifyTime,
 		MerkleProofSize:   merkleProofSize,
 		Groth16ProofSize:  groth16ProofSize,
