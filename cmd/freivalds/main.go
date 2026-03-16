@@ -22,7 +22,6 @@ import (
 func main() {
 	logKFlag := flag.Int("K", 10, "Log base 2 of K (Matrix dimension KxK, e.g., 4 for K=16)")
 	allFlag := flag.Bool("all", false, "Run benchmarks for K=4..10")
-	// 💡 컴파일 전용 플래그 추가
 	onlyCompileFlag := flag.Bool("OnlyCompile", false, "Only compile the circuit to get constraints without generating matrices or proofs")
 	flag.Parse()
 
@@ -44,13 +43,11 @@ func main() {
 
 		for logK := 5; logK <= 15; logK++ {
 			res := runExperiment(logK, *onlyCompileFlag)
-			// 💡 OnlyCompile 모드 여부와 상관없이 항상 CSV에 기록
 			benchmark.AppendFreivaldsResultToCSV(writer, res)
 			fmt.Println("----------------------------------------------------------------")
 		}
 	} else {
 		res := runExperiment(*logKFlag, *onlyCompileFlag)
-		// 💡 단일 모드일 때도 항상 CSV에 기록
 		benchmark.AppendFreivaldsResultToCSV(writer, res)
 	}
 
@@ -63,9 +60,6 @@ func runExperiment(logK int, onlyCompile bool) benchmark.FreivaldsResult {
 
 	fmt.Printf("🔥 [Freivalds] K = 2^%d (%d x %d Matrix)\n", logK, K, K)
 
-	// =========================================================================
-	// 💡 [OnlyCompile 모드] 무거운 O(K^3) 행렬 연산과 Setup을 스킵하고 컴파일만 수행
-	// =========================================================================
 	if onlyCompile {
 		fmt.Println("=== 🔍 Compiling Circuit for Constraints ===")
 
@@ -89,7 +83,6 @@ func runExperiment(logK int, onlyCompile bool) benchmark.FreivaldsResult {
 		nbConstraints := r1csSystem.GetNbConstraints()
 		fmt.Printf("✅ Circuit compiled successfully! Total Constraints: %d\n", nbConstraints)
 
-		// 💡 반환되는 결과 객체에 LogK와 계산된 Constraints만 담아서 넘깁니다. (나머지는 0)
 		return benchmark.FreivaldsResult{
 			LogK:        logK,
 			Constraints: nbConstraints,
@@ -138,11 +131,9 @@ func runExperiment(logK int, onlyCompile bool) benchmark.FreivaldsResult {
 	}
 	setupTime := time.Since(startSetup).Seconds()
 
-	// 💡 일반 벤치마크 모드에서도 Constraints 수를 추출합니다.
 	numConstraints := r1csSystem.GetNbConstraints()
 	fmt.Printf("   📊 Constraints: %d\n", numConstraints)
 
-	// 🌟 Prover 및 Verifier 객체 초기화
 	prover := protocol.NewProver(pk, crypto.CommitKey{}, nil)
 	verifier := protocol.NewVerifier(vk, crypto.CommitKey{}, nil)
 
@@ -188,7 +179,6 @@ func runExperiment(logK int, onlyCompile bool) benchmark.FreivaldsResult {
 		log.Fatalf("❌ Public witness extraction failed: %v", err)
 	}
 
-	// Verifier 객체의 VerifyGroth16 활용
 	err = verifier.VerifyGroth16(proof, publicWitness)
 	if err != nil {
 		log.Fatalf("❌ Verification FAILED: %v", err)

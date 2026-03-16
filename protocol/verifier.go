@@ -39,11 +39,5 @@ func (v *Verifier) VerifyGroth16(proof groth16.Proof, publicWitness witness.Witn
 }
 
 func (v *Verifier) VerifyCPLinks(cmVec1 []bn254.G1Affine, cmVec2 []bn254.G1Affine, proofs []crypto.CPLinkProof) bool {
-	for i := 0; i < len(proofs); i++ {
-		isValid := crypto.VerifyCPLink(cmVec1[i], cmVec2[i], proofs[i], v.CK1, v.CK2[i])
-		if !isValid {
-			return false
-		}
-	}
-	return true
+	return crypto.VerifyCPLinksBatched(cmVec1, cmVec2, proofs, v.CK1, v.CK2)
 }

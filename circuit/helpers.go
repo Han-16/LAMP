@@ -40,15 +40,15 @@ func Fold(api frontend.API, lhs, rhs []frontend.Variable) frontend.Variable {
 func VerifyRSEncoding(
 	api frontend.API,
 	k, n int,
-	domainK, weightsK []fr.Element, // K 도메인 정보 추가
-	domainN, weightsN []fr.Element, // N 도메인 정보
-	vecValues []frontend.Variable, // [K] 원본 평가값 (VecX)
-	encValues []frontend.Variable, // [N] 코드워드 (EncX)
+	domainK, weightsK []fr.Element,
+	domainN, weightsN []fr.Element,
+	vecValues []frontend.Variable,
+	encValues []frontend.Variable,
 	z frontend.Variable,
 ) {
-	// Step 1: K 도메인 위에서 Barycentric 공식으로 f(z) 계산
-	numK := frontend.Variable(0) // 분자
-	denK := frontend.Variable(0) // 분모
+	// Step 1: Calculate g(z) using Barycentric formula on K domain
+	numK := frontend.Variable(0) // numerator for K domain
+	denK := frontend.Variable(0) // denominator for K domain
 
 	for i := 0; i < k; i++ {
 		zMinusW := api.Sub(z, domainK[i])
@@ -61,7 +61,7 @@ func VerifyRSEncoding(
 		numK = api.Add(numK, numTerm)
 	}
 
-	// Step 2: N 도메인 위에서 Barycentric 공식으로 g(z) 계산
+	// Step 2: Calculate g(z) using Barycentric formula on N domain
 	numN := frontend.Variable(0)
 	denN := frontend.Variable(0)
 
@@ -77,8 +77,8 @@ func VerifyRSEncoding(
 	}
 
 	// Step 3: Decision
-	// (numK / denK) == (numN / denN) 인지 확인
-	// 나눗셈을 피하기 위해 Cross-multiplication(교차 곱)으로 증명: numK * denN == numN * denK
+	// Check (numK / denK) == (numN / denN)
+	// => numK * denN == numN * denK
 	lhs := api.Mul(numK, denN)
 	rhs := api.Mul(numN, denK)
 

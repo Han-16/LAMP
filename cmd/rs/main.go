@@ -58,16 +58,16 @@ func runExperiment(logK int, rhoStr string) benchmark.ReedSolomonResult {
 	field := ecc.BN254.ScalarField()
 
 	// =========================================================================
-	// Precompute (K 도메인과 N 도메인 모두 계산)
+	// Precompute
 	// =========================================================================
 	startPre := time.Now()
 
-	// K 도메인 셋업
+	// Setup K domain
 	domainK := fft.NewDomain(uint64(K))
 	rootsK := crypto.GetDomainRoots(domainK, K)
 	weightsK := crypto.PrecomputeBarycentricWeights(rootsK)
 
-	// N 도메인 셋업
+	// Setup N domain
 	domainN := fft.NewDomain(uint64(N))
 	rootsN := crypto.GetDomainRoots(domainN, N)
 	weightsN := crypto.PrecomputeBarycentricWeights(rootsN)
@@ -79,19 +79,18 @@ func runExperiment(logK int, rhoStr string) benchmark.ReedSolomonResult {
 	// =========================================================================
 	emptyCircuit := &circuit.RSCircuit{
 		K: K, N: N,
-		DomainK: rootsK, WeightsK: weightsK, // 🌟 K 도메인 추가
+		DomainK: rootsK, WeightsK: weightsK,
 		DomainN: rootsN, WeightsN: weightsN,
 		Message: make([]frontend.Variable, K), CodewordValues: make([]frontend.Variable, N),
 	}
 	r1csCircuit, _ := frontend.Compile(field, r1cs.NewBuilder, emptyCircuit)
 	pk, vk, _ := groth16.Setup(r1csCircuit)
 
-	// 🌟 Prover / Verifier 초기화 (RS는 CommitKey 불필요)
 	prover := protocol.NewProver(pk, crypto.CommitKey{}, crypto.NewEncoder(K, N))
 	verifier := protocol.NewVerifier(vk, crypto.CommitKey{}, nil)
 
 	// =========================================================================
-	// 1. Encoding (Prover 활용)
+	// 1. Encoding
 	// =========================================================================
 	startEnc := time.Now()
 	x := make([]fr.Element, K)
@@ -106,7 +105,7 @@ func runExperiment(logK int, rhoStr string) benchmark.ReedSolomonResult {
 	encTime := time.Since(startEnc).Seconds()
 
 	// =========================================================================
-	// 2. Prove Circuit (Prover 활용)
+	// 2. Prove Circuit
 	// =========================================================================
 	assignMessage := make([]frontend.Variable, K)
 	assignEncoded := make([]frontend.Variable, N)
@@ -132,7 +131,7 @@ func runExperiment(logK int, rhoStr string) benchmark.ReedSolomonResult {
 	proveTime := time.Since(startProve).Seconds()
 
 	// =========================================================================
-	// 3. Verify Circuit (Verifier 활용)
+	// 3. Verify Circuit
 	// =========================================================================
 	startVerify := time.Now()
 	witness, _ := frontend.NewWitness(assignment, field)

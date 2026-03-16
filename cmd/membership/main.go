@@ -69,7 +69,7 @@ func runExperiment(logK int, rhoStr string, L int) benchmark.MembershipResult {
 
 	fmt.Printf("🔥 [Membership] K = 2^%d (%d), rho = %s, N = %d, L = %d\n", logK, K, rhoStr, N, L)
 
-	// 1. 초기 데이터 생성 및 인코딩
+	// 0. Random Matrix Generation
 	matrixKxK := matrix.GenerateRandomMatrix(K, K)
 
 	ck := crypto.SetupCommitKey(K)
@@ -83,21 +83,20 @@ func runExperiment(logK int, rhoStr string, L int) benchmark.MembershipResult {
 	columnsNxK := matrix.Transpose(matrixKxN, K, N)
 
 	// =========================================================================
-	// 2. 시간 분리 측정 1: Pedersen Commitments (병렬 처리 + 난수 적용)
+	// 1: Pedersen Commitments
 	// =========================================================================
 	fmt.Println("=== 1. Generating Blinded Pedersen Commitments ===")
 	startPed := time.Now()
 
 	commitments := make([]bn254.G1Affine, N)
-	blindings := make([]fr.Element, N) // 블라인딩 팩터 배열
+	blindings := make([]fr.Element, N)
 
 	var wg sync.WaitGroup
 	for i := 0; i < N; i++ {
-		blindings[i].SetRandom() // 각 열마다 난수 생성
+		blindings[i].SetRandom()
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			// 블라인딩 팩터를 주입하여 커밋
 			commitments[idx] = crypto.PedersenCommitBlinded(columnsNxK[idx], blindings[idx], ck)
 		}(i)
 	}
@@ -105,7 +104,7 @@ func runExperiment(logK int, rhoStr string, L int) benchmark.MembershipResult {
 	pedTime := time.Since(startPed).Seconds()
 
 	// =========================================================================
-	// 3. 시간 분리 측정 2: Merkle Tree Build
+	// 2: Merkle Tree Build
 	// =========================================================================
 	fmt.Println("=== 2. Building Merkle Tree ===")
 	startTree := time.Now()
@@ -118,7 +117,7 @@ func runExperiment(logK int, rhoStr string, L int) benchmark.MembershipResult {
 	}
 
 	// =========================================================================
-	// 4. 시간 분리 측정 3: Proof Path Extraction (경로 추출)
+	// 3: Proof Path Extraction
 	// =========================================================================
 	fmt.Println("=== 3. Extracting Proof Paths ===")
 	startPathExtract := time.Now()
@@ -131,7 +130,7 @@ func runExperiment(logK int, rhoStr string, L int) benchmark.MembershipResult {
 	totalProveTime := pedTime + treeTime + pathExtractTime
 
 	// =========================================================================
-	// 5. 시간 분리 측정 4: Verification
+	// 4: Verification
 	// =========================================================================
 	fmt.Println("=== 4. Verifying Proofs ===")
 	startVerify := time.Now()
@@ -143,7 +142,6 @@ func runExperiment(logK int, rhoStr string, L int) benchmark.MembershipResult {
 	}
 	verifyTime := time.Since(startVerify).Seconds()
 
-	// fr.Element 1개 = 32 Bytes 기준으로 바이트 단위 변환
 	proofSizeBytes := L * depth * 32
 
 	return benchmark.MembershipResult{

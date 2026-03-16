@@ -54,7 +54,7 @@ func runExperiment(logK int, L int) benchmark.CpLinkResult {
 
 	mat := matrix.GenerateRandomMatrix(L, K)
 
-	// 서킷 초기화
+	// Init empty circuit and R1CS system for setup
 	emptyCircuit := &circuit.Cp{CommittedValues: make([][]frontend.Variable, L)}
 	for i := 0; i < L; i++ {
 		emptyCircuit.CommittedValues[i] = make([]frontend.Variable, K)
@@ -62,13 +62,12 @@ func runExperiment(logK int, L int) benchmark.CpLinkResult {
 	r1csSystem, _ := frontend.Compile(field, r1cs.NewBuilder, emptyCircuit)
 	pk, vk, _ := groth16.Setup(r1csSystem)
 
-	// 🌟 Prover / Verifier 초기화
 	ck1 := crypto.SetupCommitKey(K)
 	prover := protocol.NewProver(pk, ck1, nil)
 	verifier := protocol.NewVerifier(vk, ck1, prover.CK2)
 
 	// =========================================================================
-	// 1. Off-chain Commitment (외부 커밋먼트 + 난수 생성)
+	// 1. Off-line Commitment (External Commitment)
 	// =========================================================================
 	cm_vec_1 := make([]bn254.G1Affine, L)
 	blindings1 := make([]fr.Element, L)
@@ -78,7 +77,7 @@ func runExperiment(logK int, L int) benchmark.CpLinkResult {
 	}
 
 	// =========================================================================
-	// 2. Circuit Prove (내부 커밋먼트 및 난수 추출)
+	// 2. Circuit Prove (Internal Commitment)
 	// =========================================================================
 	assignment := &circuit.Cp{CommittedValues: make([][]frontend.Variable, L)}
 	for i := 0; i < L; i++ {
@@ -93,13 +92,12 @@ func runExperiment(logK int, L int) benchmark.CpLinkResult {
 	}
 
 	// =========================================================================
-	// 3. CPLink Prove (이중 블라인딩 적용)
+	// 3. CPLink Prove
 	// =========================================================================
 	fmt.Println("=== 3. Proving CP-LINK ===")
 	startCPLinkProve := time.Now()
 	cpLinkProofs := make([]crypto.CPLinkProof, L)
 	for i := 0; i < L; i++ {
-		// 외부 난수(blindings1)와 내부 난수(blindings2)를 모두 사용
 		cpLinkProofs[i] = crypto.ProveCPLink(mat[i], blindings1[i], blindings2[i], ck1, verifier.CK2[i])
 	}
 	cplinkProveTime := time.Since(startCPLinkProve).Seconds()
@@ -117,8 +115,6 @@ func runExperiment(logK int, L int) benchmark.CpLinkResult {
 	}
 	verifyTime := time.Since(startVerify).Seconds()
 
-	// Proof Size 계산: R1, R2, Z(길이 K), T1, T2 -> 총 K + 6 개의 Element
-	// Byte 단위: (K + 6) * 32 * L
 	proofSizeBytes := L * (K + 6) * 32
 
 	return benchmark.CpLinkResult{

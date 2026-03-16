@@ -7,6 +7,7 @@ import (
 	"log"
 	"math"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/Han-16/meow/benchmark"
@@ -16,6 +17,7 @@ import (
 	"github.com/Han-16/meow/protocol"
 
 	"github.com/consensys/gnark-crypto/ecc"
+	"github.com/consensys/gnark-crypto/ecc/bn254"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr/fft"
 	"github.com/consensys/gnark/backend/groth16"
@@ -44,7 +46,7 @@ func main() {
 			fmt.Println("🚀 [ALL MODE] Running Meow ZK benchmarks...")
 		}
 
-		for logK := 5; logK <= 20; logK++ {
+		for logK := 7; logK <= 20; logK++ {
 			res := runExperiment(logK, *rhoFlag, *LFlag, *onlyCompileFlag)
 			benchmark.AppendMeowResultToCSV(writer, res)
 		}
@@ -111,7 +113,15 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.M
 	}
 
 	// =========================================================================
-	// 1. Compute Matrices A, B, C & their commitments
+	// 0. Setup Phase
+	// =========================================================================
+	ck1 := crypto.SetupCommitKey(K)
+	ckScalar := crypto.SetupCommitKey(1)
+	encoder := crypto.NewEncoder(K, N)
+	prover := protocol.NewProver(nil, ck1, encoder)
+
+	// =========================================================================
+	// 1. Compute Matrices A, B, C
 	// =========================================================================
 	startCompute := time.Now()
 	matA := matrix.GenerateRandomMatrix(K, K)
@@ -119,30 +129,55 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.M
 	matC := matrix.MatMul(matA, matB, K)
 	MatrixComputeTime := time.Since(startCompute).Seconds()
 
+	// =========================================================================
+	// 2. Encode & Commit Matrices A, B, C
+	// =========================================================================
 	startMatCommit := time.Now()
-	ck1 := crypto.SetupCommitKey(K)
-	ckScalar := crypto.SetupCommitKey(1)
-	encoder := crypto.NewEncoder(K, N)
-	prover := protocol.NewProver(nil, ck1, encoder)
 
-	_, encA, _ := prover.EncodeMatrix(matA)
-	_, encB, _ := prover.EncodeMatrix(matB)
-	_, encC, _ := prover.EncodeMatrix(matC)
+	var encA, encB, encC [][]fr.Element
+	var colsEncA, colsEncB, colsEncC [][]fr.Element
+	var treeA, treeB, treeC [][]fr.Element
 
-	colsEncA := matrix.Transpose(encA, K, N)
-	colsEncB := matrix.Transpose(encB, K, N)
-	colsEncC := matrix.Transpose(encC, K, N)
+	var cmA, cmB, cmC fr.Element
 
-	treeA, cmA, leavesA, blA := prover.CommitMatrixBlinded(colsEncA, depth)
-	treeB, cmB, leavesB, blB := prover.CommitMatrixBlinded(colsEncB, depth)
-	treeC, cmC, leavesC, blC := prover.CommitMatrixBlinded(colsEncC, depth)
+	var leavesA, leavesB, leavesC []bn254.G1Affine
+	var blA, blB, blC []fr.Element
+
+	var wg sync.WaitGroup
+	wg.Add(3)
+
+	// Matrix A
+	go func() {
+		defer wg.Done()
+		_, encA, _ = prover.EncodeMatrix(matA)
+		colsEncA = matrix.Transpose(encA, K, N)
+		treeA, cmA, leavesA, blA = prover.CommitMatrixBlinded(colsEncA, depth)
+	}()
+
+	// Matrix B
+	go func() {
+		defer wg.Done()
+		_, encB, _ = prover.EncodeMatrix(matB)
+		colsEncB = matrix.Transpose(encB, K, N)
+		treeB, cmB, leavesB, blB = prover.CommitMatrixBlinded(colsEncB, depth)
+	}()
+
+	// Matrix C
+	go func() {
+		defer wg.Done()
+		_, encC, _ = prover.EncodeMatrix(matC)
+		colsEncC = matrix.Transpose(encC, K, N)
+		treeC, cmC, leavesC, blC = prover.CommitMatrixBlinded(colsEncC, depth)
+	}()
+
+	wg.Wait()
 
 	CmABC := crypto.HashElementsMiMC(cmA, cmB, cmC)
 	ChallengeR := crypto.GenerateChallengeVector(CmABC, K)
 	matCommitTime := time.Since(startMatCommit).Seconds()
 
 	// =========================================================================
-	// 2. Compute vector x, yz = x*B & their commitments
+	// 3. Compute vector x, yz = x*B & their commitments
 	// =========================================================================
 	startVecCommit := time.Now()
 	vecX := matrix.VecMatMul(ChallengeR, matA, K)
@@ -159,7 +194,7 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.M
 	vecCommitTime := time.Since(startVecCommit).Seconds()
 
 	// =========================================================================
-	// 3. Circuit Compile & Setup
+	// 4. Circuit Compile & Setup
 	// =========================================================================
 	fmt.Println("=== Circuit Setup & Prove ===")
 	domainN := fft.NewDomain(uint64(N))
@@ -192,7 +227,7 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.M
 	pk, vk, _ := groth16.Setup(r1csSystem)
 
 	// =========================================================================
-	// 4. Generate Proof
+	// 5. Generate Proof
 	// =========================================================================
 	assignment := &circuit.MeowCircuit{
 		K: K, N: N, Depth: depth,
@@ -242,7 +277,7 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.M
 	circuitProveTime := time.Since(startCircuitProve).Seconds()
 
 	// =========================================================================
-	// 5. Off-line Proof Generation for Merkle & CPLink
+	// 6. Off-line Proof Generation for Merkle & CPLink
 	// =========================================================================
 	fmt.Println("=== Generating Off-line Proofs ===")
 	startOfflineProve := time.Now()
@@ -296,7 +331,7 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.M
 	offlineProveTime := time.Since(startOfflineProve).Seconds()
 
 	// =========================================================================
-	// 6. Verify All Proofs
+	// 7. Verify All Proofs
 	// =========================================================================
 	fmt.Println("=== Verifying All Proofs ===")
 	startVerify := time.Now()
@@ -315,6 +350,10 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.M
 
 	var merkleVerifyTime float64
 	var cpLinkVerifyTime float64
+
+	var c1A, c1B, c1C, c1X, c1YZ []bn254.G1Affine
+	var c2A, c2B, c2C, c2X, c2YZ []bn254.G1Affine
+	var ck2A, ck2B, ck2C, ck2X, ck2YZ []crypto.CommitKey
 
 	for i, idx := range indices {
 		startMerkle := time.Now()
@@ -341,32 +380,46 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.M
 		idxX := idx1[2*i]
 		idxYZ := idx1[2*i+1]
 
-		startCpLink := time.Now()
-		if !crypto.VerifyCPLink(leavesA[idx], cmVec2[idxA], cpA[i], ck1, verifier.CK2[idxA]) {
-			log.Fatal("❌ CPLink A Failed")
-		}
-		if !crypto.VerifyCPLink(leavesB[idx], cmVec2[idxB], cpB[i], ck1, verifier.CK2[idxB]) {
-			log.Fatal("❌ CPLink B Failed")
-		}
-		if !crypto.VerifyCPLink(leavesC[idx], cmVec2[idxC], cpC[i], ck1, verifier.CK2[idxC]) {
-			log.Fatal("❌ CPLink C Failed")
-		}
-		if !crypto.VerifyCPLink(leavesX[idx], cmVec2[idxX], cpX[i], ckScalar, verifier.CK2[idxX]) {
-			log.Fatal("❌ CPLink X Failed")
-		}
-		if !crypto.VerifyCPLink(leavesYZ[idx], cmVec2[idxYZ], cpYZ[i], ckScalar, verifier.CK2[idxYZ]) {
-			log.Fatal("❌ CPLink YZ Failed")
-		}
-		cpLinkVerifyTime += time.Since(startCpLink).Seconds()
+		c1A = append(c1A, leavesA[idx])
+		c2A = append(c2A, cmVec2[idxA])
+		ck2A = append(ck2A, verifier.CK2[idxA])
+		c1B = append(c1B, leavesB[idx])
+		c2B = append(c2B, cmVec2[idxB])
+		ck2B = append(ck2B, verifier.CK2[idxB])
+		c1C = append(c1C, leavesC[idx])
+		c2C = append(c2C, cmVec2[idxC])
+		ck2C = append(ck2C, verifier.CK2[idxC])
+		c1X = append(c1X, leavesX[idx])
+		c2X = append(c2X, cmVec2[idxX])
+		ck2X = append(ck2X, verifier.CK2[idxX])
+		c1YZ = append(c1YZ, leavesYZ[idx])
+		c2YZ = append(c2YZ, cmVec2[idxYZ])
+		ck2YZ = append(ck2YZ, verifier.CK2[idxYZ])
 	}
+
+	startCpLink := time.Now()
+	if !crypto.VerifyCPLinksBatched(c1A, c2A, cpA, ck1, ck2A) {
+		log.Fatal("❌ Batched CPLink A Failed")
+	}
+	if !crypto.VerifyCPLinksBatched(c1B, c2B, cpB, ck1, ck2B) {
+		log.Fatal("❌ Batched CPLink B Failed")
+	}
+	if !crypto.VerifyCPLinksBatched(c1C, c2C, cpC, ck1, ck2C) {
+		log.Fatal("❌ Batched CPLink C Failed")
+	}
+	if !crypto.VerifyCPLinksBatched(c1X, c2X, cpX, ckScalar, ck2X) {
+		log.Fatal("❌ Batched CPLink X Failed")
+	}
+	if !crypto.VerifyCPLinksBatched(c1YZ, c2YZ, cpYZ, ckScalar, ck2YZ) {
+		log.Fatal("❌ Batched CPLink YZ Failed")
+	}
+	cpLinkVerifyTime += time.Since(startCpLink).Seconds()
+
 	totalVerifyTime := time.Since(startVerify).Seconds()
 	fmt.Println("✅ ALL BLINDED ZK PROOFS VERIFIED SUCCESSFULLY!")
 
 	totalProveTime := matCommitTime + vecCommitTime + circuitProveTime + offlineProveTime
 
-	// =========================================================================
-	// 7. Calculate Proof Sizes
-	// =========================================================================
 	var buf bytes.Buffer
 	circuitProof.WriteTo(&buf)
 	groth16ProofSize := buf.Len()
@@ -378,7 +431,6 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.M
 		cpLinkProofSize += 128 + (len(cpA[i].Z) * 32)
 		cpLinkProofSize += 128 + (len(cpB[i].Z) * 32)
 		cpLinkProofSize += 128 + (len(cpC[i].Z) * 32)
-
 		cpLinkProofSize += 128 + (len(cpX[i].Z) * 32)
 		cpLinkProofSize += 128 + (len(cpYZ[i].Z) * 32)
 	}

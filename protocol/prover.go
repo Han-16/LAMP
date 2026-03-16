@@ -48,26 +48,23 @@ func NewProver(pk groth16.ProvingKey, ck1 crypto.CommitKey, encoder *crypto.Enco
 }
 
 func (p *Prover) CommitMatrixBlinded(matrix [][]fr.Element, depth int) ([][]fr.Element, fr.Element, []bn254.G1Affine, []fr.Element) {
-	L := len(matrix)
-	cm := make([]bn254.G1Affine, L)
-	blindings := make([]fr.Element, L)
-	for i := 0; i < L; i++ {
-		blindings[i].SetRandom()
-		cm[i] = crypto.PedersenCommitBlinded(matrix[i], blindings[i], p.CK1)
-	}
+	cm, blindings := crypto.BatchPedersenCommitBlinded(matrix, p.CK1)
+
 	tree, root := crypto.BuildMerkleTreeFromGroupElements(cm, depth)
+
 	return tree, root, cm, blindings
 }
 
 func (p *Prover) CommitScalarsBlinded(scalars []fr.Element, depth int, ckScalar crypto.CommitKey) ([][]fr.Element, fr.Element, []bn254.G1Affine, []fr.Element) {
-	L := len(scalars)
-	cm := make([]bn254.G1Affine, L)
-	blindings := make([]fr.Element, L)
-	for i := 0; i < L; i++ {
-		blindings[i].SetRandom()
-		cm[i] = crypto.PedersenCommitBlinded([]fr.Element{scalars[i]}, blindings[i], ckScalar)
+	matrix := make([][]fr.Element, len(scalars))
+	for i, s := range scalars {
+		matrix[i] = []fr.Element{s}
 	}
+
+	cm, blindings := crypto.BatchPedersenCommitBlinded(matrix, ckScalar)
+
 	tree, root := crypto.BuildMerkleTreeFromGroupElements(cm, depth)
+
 	return tree, root, cm, blindings
 }
 
