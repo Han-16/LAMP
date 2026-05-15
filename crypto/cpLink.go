@@ -1,233 +1,187 @@
 package crypto
 
 import (
-	"sync"
+	"fmt"
+	"math/big"
 
-	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark-crypto/ecc/bn254"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 )
 
-type CPLinkProof struct {
-	R1 bn254.G1Affine
-	R2 bn254.G1Affine
-	Z  []fr.Element
-	T1 fr.Element // Response for external commit (C1)
-	T2 fr.Element // Response for internal commit (C2)
+type AmComEqProof struct {
+	R    bn254.G1Affine
+	RHat []bn254.G1Affine
+	Z    [][]fr.Element
+	T    fr.Element
+	THat []fr.Element
 }
 
-// ProveCPLink: Generate a CP-LINK proof for two commitments C1 and C2 that commit to the same underlying data x with randomness r1 and r2, respectively.
-func ProveCPLink(x []fr.Element, r1, r2 fr.Element, ck1, ck2 CommitKey) CPLinkProof {
-	K := len(x)
-
-	// 1. Generate random masks
-	y := make([]fr.Element, K)
-	for i := 0; i < K; i++ {
-		y[i].SetRandom()
+func ProveAmComEq(
+	blocks [][]fr.Element,
+	alpha fr.Element,
+	betas []fr.Element,
+	snarkCK CommitKey,
+	externalCK CommitKey,
+	snarkCommit bn254.G1Affine,
+	externalCommits []bn254.G1Affine,
+) (AmComEqProof, error) {
+	if len(blocks) == 0 {
+		return AmComEqProof{}, fmt.Errorf("am-com-eq requires at least one block")
+	}
+	if len(blocks) != len(betas) || len(blocks) != len(externalCommits) {
+		return AmComEqProof{}, fmt.Errorf("block, blinding, and commitment counts must match")
+	}
+	blockLen := len(blocks[0])
+	if blockLen != len(externalCK.G) {
+		return AmComEqProof{}, fmt.Errorf("block length must match external commitment key")
+	}
+	for i := range blocks {
+		if len(blocks[i]) != blockLen {
+			return AmComEqProof{}, fmt.Errorf("all blocks must have the same length")
+		}
+	}
+	if len(snarkCK.G) != len(blocks)*blockLen {
+		return AmComEqProof{}, fmt.Errorf("snark commitment key length must match flattened blocks")
 	}
 
-	var s1, s2 fr.Element
-	s1.SetRandom()
-	s2.SetRandom()
-
-	// 2. Compute initial commitments (Announcements)
-	R1 := PedersenCommitBlinded(y, s1, ck1)
-	R2 := PedersenCommitBlinded(y, s2, ck2)
-
-	// 3. Compute actual commitments
-	C1 := PedersenCommitBlinded(x, r1, ck1)
-	C2 := PedersenCommitBlinded(x, r2, ck2)
-
-	// 4. Generate Fiat-Shamir challenge 'c'
-	c := computeCPLinkChallenge(C1, C2, R1, R2)
-
-	// 5. Compute responses (Z, T1, T2)
-	z := make([]fr.Element, K)
-	for i := 0; i < K; i++ {
-		var cx fr.Element
-		cx.Mul(&c, &x[i])
-		z[i].Add(&y[i], &cx)
+	randomBlocks := make([][]fr.Element, len(blocks))
+	flatRandom := make([]fr.Element, 0, len(snarkCK.G))
+	for i := range randomBlocks {
+		randomBlocks[i] = make([]fr.Element, blockLen)
+		for j := range randomBlocks[i] {
+			randomBlocks[i][j].SetRandom()
+		}
+		flatRandom = append(flatRandom, randomBlocks[i]...)
 	}
 
-	var cr1, cr2, t1, t2 fr.Element
-	cr1.Mul(&c, &r1)
-	cr2.Mul(&c, &r2)
-	t1.Add(&s1, &cr1)
-	t2.Add(&s2, &cr2)
+	var sAlpha fr.Element
+	sAlpha.SetRandom()
+	r := PedersenCommitBlinded(flatRandom, sAlpha, snarkCK)
 
-	return CPLinkProof{R1: R1, R2: R2, Z: z, T1: t1, T2: t2}
+	rHat := make([]bn254.G1Affine, len(blocks))
+	sBeta := make([]fr.Element, len(blocks))
+	for i := range blocks {
+		sBeta[i].SetRandom()
+		rHat[i] = PedersenCommitBlinded(randomBlocks[i], sBeta[i], externalCK)
+	}
+
+	challenge := computeAmComEqChallenge(snarkCommit, externalCommits, r, rHat)
+
+	z := make([][]fr.Element, len(blocks))
+	for i := range blocks {
+		z[i] = make([]fr.Element, blockLen)
+		for j := range blocks[i] {
+			var term fr.Element
+			term.Mul(&challenge, &blocks[i][j])
+			z[i][j].Add(&randomBlocks[i][j], &term)
+		}
+	}
+
+	var challengeAlpha fr.Element
+	challengeAlpha.Mul(&challenge, &alpha)
+
+	var t fr.Element
+	t.Add(&sAlpha, &challengeAlpha)
+
+	tHat := make([]fr.Element, len(blocks))
+	for i := range blocks {
+		var challengeBeta fr.Element
+		challengeBeta.Mul(&challenge, &betas[i])
+		tHat[i].Add(&sBeta[i], &challengeBeta)
+	}
+
+	return AmComEqProof{
+		R:    r,
+		RHat: rHat,
+		Z:    z,
+		T:    t,
+		THat: tHat,
+	}, nil
 }
 
-// VerifyCPLink: Verify a single CP-LINK proof for commitments C1 and C2.
-func VerifyCPLink(C1, C2 bn254.G1Affine, proof CPLinkProof, ck1, ck2 CommitKey) bool {
-	c := computeCPLinkChallenge(C1, C2, proof.R1, proof.R2)
-
-	var weight fr.Element
-	weight.SetOne()
-
-	capacity := len(proof.Z) + 3
-
-	var wg sync.WaitGroup
-	wg.Add(2)
-	var res1Ok, res2Ok bool
-
-	// --- 1. C1 Verification ---
-	go func() {
-		defer wg.Done()
-		points := make([]bn254.G1Affine, 0, capacity)
-		scalars := make([]fr.Element, 0, capacity)
-		points, scalars = appendZeroCheckTerms(points, scalars, proof.Z, proof.T1, proof.R1, C1, ck1, c, weight)
-
-		var res1 bn254.G1Affine
-		if _, err := res1.MultiExp(points, scalars, ecc.MultiExpConfig{}); err == nil {
-			res1Ok = res1.IsInfinity()
+func VerifyAmComEq(
+	snarkCommit bn254.G1Affine,
+	externalCommits []bn254.G1Affine,
+	proof AmComEqProof,
+	snarkCK CommitKey,
+	externalCK CommitKey,
+) bool {
+	if len(proof.Z) == 0 || len(proof.Z) != len(externalCommits) || len(proof.Z) != len(proof.RHat) || len(proof.Z) != len(proof.THat) {
+		return false
+	}
+	blockLen := len(proof.Z[0])
+	if blockLen != len(externalCK.G) || len(snarkCK.G) != len(proof.Z)*blockLen {
+		return false
+	}
+	for i := range proof.Z {
+		if len(proof.Z[i]) != blockLen {
+			return false
 		}
-	}()
+	}
 
-	// --- 2. C2 Verification ---
-	go func() {
-		defer wg.Done()
-		points := make([]bn254.G1Affine, 0, capacity)
-		scalars := make([]fr.Element, 0, capacity)
-		points, scalars = appendZeroCheckTerms(points, scalars, proof.Z, proof.T2, proof.R2, C2, ck2, c, weight)
+	challenge := computeAmComEqChallenge(snarkCommit, externalCommits, proof.R, proof.RHat)
 
-		var res2 bn254.G1Affine
-		if _, err := res2.MultiExp(points, scalars, ecc.MultiExpConfig{}); err == nil {
-			res2Ok = res2.IsInfinity()
+	flatZ := flattenBlocks(proof.Z)
+	lhs := PedersenCommitBlinded(flatZ, proof.T, snarkCK)
+	rhs := addScaledPoint(proof.R, snarkCommit, challenge)
+	if !lhs.Equal(&rhs) {
+		return false
+	}
+
+	for i := range proof.Z {
+		lhsHat := PedersenCommitBlinded(proof.Z[i], proof.THat[i], externalCK)
+		rhsHat := addScaledPoint(proof.RHat[i], externalCommits[i], challenge)
+		if !lhsHat.Equal(&rhsHat) {
+			return false
 		}
-	}()
+	}
 
-	wg.Wait()
-	return res1Ok && res2Ok
+	return true
 }
 
-// VerifyCPLinksBatched: Verify multiple CP-LINK proofs in a batched manner for lists of commitments C1s and C2s.
-func VerifyCPLinksBatched(C1s, C2s []bn254.G1Affine, proofs []CPLinkProof, ck1 CommitKey, ck2s []CommitKey) bool {
-	L := len(proofs)
-	if L == 0 {
-		return true
+func AmComEqProofSizeBytes(proof AmComEqProof) int {
+	size := 64 + 32
+	size += len(proof.RHat) * 64
+	size += len(proof.THat) * 32
+	for i := range proof.Z {
+		size += len(proof.Z[i]) * 32
 	}
-	K := len(proofs[0].Z)
-
-	// 1. Reconstruct challenges and combination coefficient 'r'
-	cs := make([]fr.Element, L)
-	for i := 0; i < L; i++ {
-		cs[i] = computeCPLinkChallenge(C1s[i], C2s[i], proofs[i].R1, proofs[i].R2)
-	}
-
-	r := cs[0]
-	for i := 1; i < L; i++ {
-		r = HashElements(r, cs[i])
-	}
-
-	var rPow fr.Element
-	rPow.SetOne()
-
-	// Preallocate structures to avoid dynamic memory resizing overhead
-	zBatched := make([]fr.Element, K)
-	var t1Batched fr.Element
-
-	rhs1Points := make([]bn254.G1Affine, 0, 2*L)
-	rhs1Scalars := make([]fr.Element, 0, 2*L)
-
-	msm2Points := make([]bn254.G1Affine, 0, L*(K+3))
-	msm2Scalars := make([]fr.Element, 0, L*(K+3))
-
-	// 2. Compress C1 variables and group C2 equations
-	for i := 0; i < L; i++ {
-		// --- C1 Compression ---
-		for j := 0; j < K; j++ {
-			var tmpZ fr.Element
-			tmpZ.Mul(&proofs[i].Z[j], &rPow)
-			zBatched[j].Add(&zBatched[j], &tmpZ)
-		}
-		var tmpT1 fr.Element
-		tmpT1.Mul(&proofs[i].T1, &rPow)
-		t1Batched.Add(&t1Batched, &tmpT1)
-
-		rhs1Points = append(rhs1Points, proofs[i].R1)
-		rhs1Scalars = append(rhs1Scalars, rPow)
-
-		var rC fr.Element
-		rC.Mul(&rPow, &cs[i])
-		rhs1Points = append(rhs1Points, C1s[i])
-		rhs1Scalars = append(rhs1Scalars, rC)
-
-		// --- Grouping C2 Equations (Constructing Giant MSM) ---
-		msm2Points, msm2Scalars = appendZeroCheckTerms(
-			msm2Points, msm2Scalars,
-			proofs[i].Z, proofs[i].T2, proofs[i].R2, C2s[i],
-			ck2s[i], cs[i], rPow,
-		)
-
-		// Update combination weight r^i
-		rPow.Mul(&rPow, &r)
-	}
-
-	var wg sync.WaitGroup
-	wg.Add(2)
-	var c1Ok, c2Ok bool
-
-	// --- 3. C1 Verification ---
-	go func() {
-		defer wg.Done()
-		lhs1 := PedersenCommitBlinded(zBatched, t1Batched, ck1)
-		var rhs1 bn254.G1Affine
-		if _, err := rhs1.MultiExp(rhs1Points, rhs1Scalars, ecc.MultiExpConfig{}); err == nil {
-			c1Ok = lhs1.Equal(&rhs1)
-		}
-	}()
-
-	// --- 4. C2 Verification (Giant MSM) ---
-	go func() {
-		defer wg.Done()
-		var msm2 bn254.G1Affine
-		if _, err := msm2.MultiExp(msm2Points, msm2Scalars, ecc.MultiExpConfig{}); err == nil {
-			c2Ok = msm2.IsInfinity()
-		}
-	}()
-
-	wg.Wait()
-	return c1Ok && c2Ok
+	return size
 }
 
-func computeCPLinkChallenge(C1, C2, R1, R2 bn254.G1Affine) fr.Element {
-	return HashElements(HashPoint(C1), HashPoint(C2), HashPoint(R1), HashPoint(R2))
+func computeAmComEqChallenge(C bn254.G1Affine, cHat []bn254.G1Affine, R bn254.G1Affine, rHat []bn254.G1Affine) fr.Element {
+	elements := make([]fr.Element, 0, 2+len(cHat)+len(rHat))
+	elements = append(elements, HashPoint(C))
+	for i := range cHat {
+		elements = append(elements, HashPoint(cHat[i]))
+	}
+	elements = append(elements, HashPoint(R))
+	for i := range rHat {
+		elements = append(elements, HashPoint(rHat[i]))
+	}
+	return HashElements(elements...)
 }
 
-func appendZeroCheckTerms(
-	points []bn254.G1Affine, scalars []fr.Element,
-	Z []fr.Element, T fr.Element, R, C bn254.G1Affine,
-	ck CommitKey, c, weight fr.Element,
-) ([]bn254.G1Affine, []fr.Element) {
-	K := len(Z)
-
-	// 1. LHS: weight * Z_i * G_i
-	for j := 0; j < K; j++ {
-		points = append(points, ck.G[j])
-		var tmpZ fr.Element
-		tmpZ.Mul(&Z[j], &weight)
-		scalars = append(scalars, tmpZ)
+func flattenBlocks(blocks [][]fr.Element) []fr.Element {
+	total := 0
+	for i := range blocks {
+		total += len(blocks[i])
 	}
+	out := make([]fr.Element, 0, total)
+	for i := range blocks {
+		out = append(out, blocks[i]...)
+	}
+	return out
+}
 
-	// 2. LHS: weight * T * H
-	points = append(points, ck.H)
-	var tmpT fr.Element
-	tmpT.Mul(&T, &weight)
-	scalars = append(scalars, tmpT)
+func addScaledPoint(base, point bn254.G1Affine, scalar fr.Element) bn254.G1Affine {
+	var scalarBigInt big.Int
+	scalar.BigInt(&scalarBigInt)
 
-	// 3. RHS transposed: -weight * R
-	var negWeight fr.Element
-	negWeight.Neg(&weight)
-	points = append(points, R)
-	scalars = append(scalars, negWeight)
+	var scaled bn254.G1Affine
+	scaled.ScalarMultiplication(&point, &scalarBigInt)
 
-	// 4. RHS transposed: -(weight * c) * C
-	var negWeightC fr.Element
-	negWeightC.Mul(&weight, &c)
-	negWeightC.Neg(&negWeightC)
-	points = append(points, C)
-	scalars = append(scalars, negWeightC)
-
-	return points, scalars
+	var out bn254.G1Affine
+	out.Add(&base, &scaled)
+	return out
 }

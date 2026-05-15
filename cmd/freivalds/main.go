@@ -9,6 +9,7 @@ import (
 
 	"github.com/Han-16/meow/benchmark"
 	"github.com/Han-16/meow/circuit"
+	"github.com/Han-16/meow/config"
 	"github.com/Han-16/meow/crypto"
 	"github.com/Han-16/meow/matrix"
 	"github.com/Han-16/meow/protocol"
@@ -20,12 +21,20 @@ import (
 )
 
 func main() {
-	logKFlag := flag.Int("K", 10, "Log base 2 of K (Matrix dimension KxK, e.g., 4 for K=16)")
-	allFlag := flag.Bool("all", false, "Run benchmarks for K=4..10")
-	onlyCompileFlag := flag.Bool("OnlyCompile", false, "Only compile the circuit to get constraints without generating matrices or proofs")
+	if err := config.LoadDotEnv(); err != nil {
+		log.Fatalf("failed to load .env: %v", err)
+	}
+
+	logKFlag := flag.Int("K", config.GetInt("FREIVALDS_LOG_K", 10), "Log base 2 of K")
+	allFlag := flag.Bool("all", config.GetBool("FREIVALDS_ALL", false), "Run benchmark range")
+	fromFlag := flag.Int("from", config.GetInt("FREIVALDS_LOG_K_FROM", 5), "First logK when -all is enabled")
+	toFlag := flag.Int("to", config.GetInt("FREIVALDS_LOG_K_TO", 15), "Last logK when -all is enabled")
+	compileFlag := flag.Bool("compile", config.GetBool("FREIVALDS_ONLY_COMPILE", false), "Only compile the circuit to get constraints")
+	onlyCompileFlag := flag.Bool("OnlyCompile", config.GetBool("FREIVALDS_ONLY_COMPILE", false), "Alias for -compile")
 	flag.Parse()
 
-	outputDir := filepath.Join("../../benchmark", "benchmark_results")
+	onlyCompile := *compileFlag || *onlyCompileFlag
+	outputDir := config.OutputDir("FREIVALDS_OUTPUT_DIR", filepath.Join("benchmark", "freivalds"))
 	if err := benchmark.EnsureDir(outputDir); err != nil {
 		log.Fatalf("Failed to create directory: %v", err)
 	}
@@ -35,19 +44,22 @@ func main() {
 	defer file.Close()
 
 	if *allFlag {
-		if *onlyCompileFlag {
-			fmt.Println("🚀 [OnlyCompile MODE] Checking constraints for K from 2^5 to 2^15")
+		if *fromFlag > *toFlag {
+			log.Fatalf("invalid logK range: from=%d, to=%d", *fromFlag, *toFlag)
+		}
+		if onlyCompile {
+			fmt.Printf("🚀 [OnlyCompile MODE] Checking constraints for logK=%d..%d\n", *fromFlag, *toFlag)
 		} else {
-			fmt.Println("🚀 [ALL MODE] Running benchmarks: K from 2^5 to 2^15")
+			fmt.Printf("🚀 [ALL MODE] Running Freivalds benchmarks for logK=%d..%d\n", *fromFlag, *toFlag)
 		}
 
-		for logK := 5; logK <= 15; logK++ {
-			res := runExperiment(logK, *onlyCompileFlag)
+		for logK := *fromFlag; logK <= *toFlag; logK++ {
+			res := runExperiment(logK, onlyCompile)
 			benchmark.AppendFreivaldsResultToCSV(writer, res)
 			fmt.Println("----------------------------------------------------------------")
 		}
 	} else {
-		res := runExperiment(*logKFlag, *onlyCompileFlag)
+		res := runExperiment(*logKFlag, onlyCompile)
 		benchmark.AppendFreivaldsResultToCSV(writer, res)
 	}
 
@@ -58,22 +70,12 @@ func runExperiment(logK int, onlyCompile bool) benchmark.FreivaldsResult {
 	K := 1 << logK
 	field := ecc.BN254.ScalarField()
 
-	fmt.Printf("🔥 [Freivalds] K = 2^%d (%d x %d Matrix)\n", logK, K, K)
+	fmt.Printf("🔥 [Freivalds] logK=%d, K=%d (%d x %d Matrix)\n", logK, K, K, K)
 
 	if onlyCompile {
 		fmt.Println("=== 🔍 Compiling Circuit for Constraints ===")
 
-		emptyCircuit := &circuit.FreivaldsCircuit{
-			A: make([][]frontend.Variable, K),
-			B: make([][]frontend.Variable, K),
-			C: make([][]frontend.Variable, K),
-			K: K,
-		}
-		for i := 0; i < K; i++ {
-			emptyCircuit.A[i] = make([]frontend.Variable, K)
-			emptyCircuit.B[i] = make([]frontend.Variable, K)
-			emptyCircuit.C[i] = make([]frontend.Variable, K)
-		}
+		emptyCircuit := newFreivaldsCircuit(K)
 
 		r1csSystem, err := frontend.Compile(field, r1cs.NewBuilder, emptyCircuit)
 		if err != nil {
@@ -108,17 +110,7 @@ func runExperiment(logK int, onlyCompile bool) benchmark.FreivaldsResult {
 	fmt.Println("=== 2. Circuit Compilation & Setup ===")
 	startSetup := time.Now()
 
-	emptyCircuit := &circuit.FreivaldsCircuit{
-		A: make([][]frontend.Variable, K),
-		B: make([][]frontend.Variable, K),
-		C: make([][]frontend.Variable, K),
-		K: K,
-	}
-	for i := 0; i < K; i++ {
-		emptyCircuit.A[i] = make([]frontend.Variable, K)
-		emptyCircuit.B[i] = make([]frontend.Variable, K)
-		emptyCircuit.C[i] = make([]frontend.Variable, K)
-	}
+	emptyCircuit := newFreivaldsCircuit(K)
 
 	r1csSystem, err := frontend.Compile(field, r1cs.NewBuilder, emptyCircuit)
 	if err != nil {
@@ -141,16 +133,8 @@ func runExperiment(logK int, onlyCompile bool) benchmark.FreivaldsResult {
 	// 3. Witness Assignment & Proof Generation
 	// =========================================================================
 	fmt.Println("=== 3. Generating Proof ===")
-	assignment := &circuit.FreivaldsCircuit{
-		A: make([][]frontend.Variable, K),
-		B: make([][]frontend.Variable, K),
-		C: make([][]frontend.Variable, K),
-		K: K,
-	}
+	assignment := newFreivaldsCircuit(K)
 	for i := 0; i < K; i++ {
-		assignment.A[i] = make([]frontend.Variable, K)
-		assignment.B[i] = make([]frontend.Variable, K)
-		assignment.C[i] = make([]frontend.Variable, K)
 		for j := 0; j < K; j++ {
 			assignment.A[i][j] = matA[i][j]
 			assignment.B[i][j] = matB[i][j]
@@ -194,4 +178,19 @@ func runExperiment(logK int, onlyCompile bool) benchmark.FreivaldsResult {
 		ProveTime:         proveTime,
 		VerifyTime:        verifyTime,
 	}
+}
+
+func newFreivaldsCircuit(K int) *circuit.FreivaldsCircuit {
+	c := &circuit.FreivaldsCircuit{
+		A: make([][]frontend.Variable, K),
+		B: make([][]frontend.Variable, K),
+		C: make([][]frontend.Variable, K),
+		K: K,
+	}
+	for i := 0; i < K; i++ {
+		c.A[i] = make([]frontend.Variable, K)
+		c.B[i] = make([]frontend.Variable, K)
+		c.C[i] = make([]frontend.Variable, K)
+	}
+	return c
 }

@@ -46,16 +46,6 @@ func HashPoint(p bn254.G1Affine) fr.Element {
 	return HashElements(xFr, yFr)
 }
 
-func GenerateChallengeVector(seed fr.Element, size int) []fr.Element {
-	r := make([]fr.Element, size)
-	currentSeed := seed
-	for i := 0; i < size; i++ {
-		r[i] = HashElements(currentSeed)
-		currentSeed = r[i]
-	}
-	return r
-}
-
 func GenerateUniqueIndices(seed fr.Element, N int, L int) ([]int, error) {
 	if L > N {
 		return nil, fmt.Errorf("cannot extract %d unique indices from a pool of %d", L, N)

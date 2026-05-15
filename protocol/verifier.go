@@ -37,7 +37,3 @@ func (v *Verifier) VerifyMembership(root fr.Element, commitment bn254.G1Affine, 
 func (v *Verifier) VerifyGroth16(proof groth16.Proof, publicWitness witness.Witness) error {
 	return groth16.Verify(proof, v.VK, publicWitness)
 }
-
-func (v *Verifier) VerifyCPLinks(cmVec1 []bn254.G1Affine, cmVec2 []bn254.G1Affine, proofs []crypto.CPLinkProof) bool {
-	return crypto.VerifyCPLinksBatched(cmVec1, cmVec2, proofs, v.CK1, v.CK2)
-}

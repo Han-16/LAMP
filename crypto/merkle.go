@@ -1,8 +1,6 @@
 package crypto
 
 import (
-	"sync"
-
 	"github.com/consensys/gnark-crypto/ecc/bn254"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 )
@@ -18,10 +16,6 @@ func buildBaseMerkleTree(leaves []fr.Element, depth int) ([][]fr.Element, fr.Ele
 		}
 	}
 	return tree, tree[depth][0]
-}
-
-func BuildMerkleTreeFromFieldElements(leaves []fr.Element, depth int) ([][]fr.Element, fr.Element) {
-	return buildBaseMerkleTree(leaves, depth)
 }
 
 func BuildMerkleTreeFromGroupElements(leaves []bn254.G1Affine, depth int) ([][]fr.Element, fr.Element) {
@@ -41,26 +35,4 @@ func GetMerkleProof(tree [][]fr.Element, idx, depth int) []fr.Element {
 		currIdx /= 2
 	}
 	return proof
-}
-
-func CommitMatrix(columns [][]fr.Element, ck CommitKey, depth int) ([][]fr.Element, fr.Element, []bn254.G1Affine, []fr.Element) {
-	l := len(columns)
-	commitments := make([]bn254.G1Affine, l)
-	blindings := make([]fr.Element, l)
-
-	var wg sync.WaitGroup
-	for i := 0; i < l; i++ {
-		blindings[i].SetRandom()
-
-		wg.Add(1)
-		go func(idx int) {
-			defer wg.Done()
-			commitments[idx] = PedersenCommitBlinded(columns[idx], blindings[idx], ck)
-		}(i)
-	}
-	wg.Wait()
-
-	tree, root := BuildMerkleTreeFromGroupElements(commitments, depth)
-
-	return tree, root, commitments, blindings
 }

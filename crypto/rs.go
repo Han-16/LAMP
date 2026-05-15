@@ -54,43 +54,6 @@ func (e *Encoder) Encode(data []fr.Element) ([]fr.Element, []fr.Element, error) 
 	return msgCoeffs, paddedCoeffs, nil
 }
 
-func (e *Encoder) EncodeRowWise(data [][]fr.Element) ([][]fr.Element, [][]fr.Element, error) {
-	coeffsList := make([][]fr.Element, len(data))
-	encodedList := make([][]fr.Element, len(data))
-	for i, row := range data {
-		coeffs, encRow, err := e.Encode(row)
-		if err != nil {
-			return nil, nil, err
-		}
-		coeffsList[i] = coeffs
-		encodedList[i] = encRow
-	}
-	return coeffsList, encodedList, nil
-}
-
-func (e *Encoder) Verify(encodedData []fr.Element) bool {
-	domainNSize := int(e.domainN.Cardinality)
-	domainKSize := int(e.domainK.Cardinality)
-
-	if len(encodedData) != domainNSize {
-		return false
-	}
-
-	coeffs := make([]fr.Element, domainNSize)
-	copy(coeffs, encodedData)
-
-	e.domainN.FFTInverse(coeffs, fft.DIF)
-	utils.BitReverse(coeffs)
-
-	for i := domainKSize; i < domainNSize; i++ {
-		if !coeffs[i].IsZero() {
-			return false
-		}
-	}
-
-	return true
-}
-
 func GetDomainRoots(domain *fft.Domain, size int) []fr.Element {
 	roots := make([]fr.Element, size)
 	roots[0].SetOne()

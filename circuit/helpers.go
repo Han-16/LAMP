@@ -37,6 +37,46 @@ func Fold(api frontend.API, lhs, rhs []frontend.Variable) frontend.Variable {
 	return acc
 }
 
+func Powers(api frontend.API, r frontend.Variable, length int) []frontend.Variable {
+	powers := make([]frontend.Variable, length)
+	cur := frontend.Variable(1)
+	for i := 0; i < length; i++ {
+		powers[i] = cur
+		cur = api.Mul(cur, r)
+	}
+	return powers
+}
+
+func FlattenRows(matrices ...[][]frontend.Variable) []frontend.Variable {
+	total := 0
+	for _, matrix := range matrices {
+		for _, row := range matrix {
+			total += len(row)
+		}
+	}
+
+	out := make([]frontend.Variable, 0, total)
+	for _, matrix := range matrices {
+		for _, row := range matrix {
+			out = append(out, row...)
+		}
+	}
+	return out
+}
+
+func AppendVariables(slices ...[]frontend.Variable) []frontend.Variable {
+	total := 0
+	for _, slice := range slices {
+		total += len(slice)
+	}
+
+	out := make([]frontend.Variable, 0, total)
+	for _, slice := range slices {
+		out = append(out, slice...)
+	}
+	return out
+}
+
 func VerifyRSEncoding(
 	api frontend.API,
 	k, n int,
