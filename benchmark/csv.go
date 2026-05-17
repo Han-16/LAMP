@@ -59,6 +59,7 @@ type MeowResult struct {
 	N                 int
 	NumQueries        int // L
 	Constraints       int
+	SetupTime         float64
 	MatrixComputeTime float64
 	MatrixCommitTime  float64
 	VectorCommitTime  float64
@@ -86,10 +87,10 @@ func AppendFreivaldsResultToCSV(writer *csv.Writer, res FreivaldsResult) {
 	record := []string{
 		strconv.Itoa(res.LogK),
 		strconv.Itoa(res.Constraints),
-		fmt.Sprintf("%.3f", res.MatrixComputeTime),
-		fmt.Sprintf("%.3f", res.SetupTime),
-		fmt.Sprintf("%.3f", res.ProveTime),
-		fmt.Sprintf("%.3f", res.VerifyTime),
+		formatSeconds(res.MatrixComputeTime),
+		formatSeconds(res.SetupTime),
+		formatSeconds(res.ProveTime),
+		formatSeconds(res.VerifyTime),
 	}
 	appendCSV(writer, record, fmt.Sprintf("logK=%d", res.LogK))
 }
@@ -97,6 +98,7 @@ func AppendFreivaldsResultToCSV(writer *csv.Writer, res FreivaldsResult) {
 func InitMeowCSV(filename string) (*os.File, *csv.Writer) {
 	return initCSV(filename, []string{
 		"LogK", "Rho", "N", "NumQueries", "Constraints",
+		"SetupTime(s)",
 		"MatrixComputeTime(s)", "MatrixCommitTime(s)", "VectorCommitTime(s)", "CircuitProveTime(s)",
 		"CPLinkProveTime(s)", "TotalProveTime(s)",
 		"CircuitVerifyTime(s)", "MerkleVerifyTime(s)", "CPLinkVerifyTime(s)", "TotalVerifyTime(s)",
@@ -111,20 +113,25 @@ func AppendMeowResultToCSV(writer *csv.Writer, res MeowResult) {
 		strconv.Itoa(res.N),
 		strconv.Itoa(res.NumQueries),
 		strconv.Itoa(res.Constraints),
-		fmt.Sprintf("%.6f", res.MatrixComputeTime),
-		fmt.Sprintf("%.6f", res.MatrixCommitTime),
-		fmt.Sprintf("%.6f", res.VectorCommitTime),
-		fmt.Sprintf("%.6f", res.CircuitProveTime),
-		fmt.Sprintf("%.6f", res.CPLinkProveTime),
-		fmt.Sprintf("%.6f", res.TotalProveTime),
-		fmt.Sprintf("%.6f", res.CircuitVerifyTime),
-		fmt.Sprintf("%.6f", res.MerkleVerifyTime),
-		fmt.Sprintf("%.6f", res.CPLinkVerifyTime),
-		fmt.Sprintf("%.6f", res.TotalVerifyTime),
+		formatSeconds(res.SetupTime),
+		formatSeconds(res.MatrixComputeTime),
+		formatSeconds(res.MatrixCommitTime),
+		formatSeconds(res.VectorCommitTime),
+		formatSeconds(res.CircuitProveTime),
+		formatSeconds(res.CPLinkProveTime),
+		formatSeconds(res.TotalProveTime),
+		formatSeconds(res.CircuitVerifyTime),
+		formatSeconds(res.MerkleVerifyTime),
+		formatSeconds(res.CPLinkVerifyTime),
+		formatSeconds(res.TotalVerifyTime),
 		strconv.Itoa(res.MerkleProofSize),
 		strconv.Itoa(res.Groth16ProofSize),
 		strconv.Itoa(res.CPLinkProofSize),
 		strconv.Itoa(res.TotalProofSize),
 	}
 	appendCSV(writer, record, fmt.Sprintf("Meow Protocol: logK=%d, rho=%s, L=%d, constraints=%d", res.LogK, res.Rho, res.NumQueries, res.Constraints))
+}
+
+func formatSeconds(seconds float64) string {
+	return fmt.Sprintf("%.2f", seconds)
 }

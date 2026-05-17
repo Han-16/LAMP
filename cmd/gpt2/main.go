@@ -69,6 +69,18 @@ type meowMatmulLayout struct {
 	yzBase      int
 }
 
+type meowBlockRef struct {
+	group  int
+	base   int
+	blocks [][]fr.Element
+}
+
+type meowMatmulReuse struct {
+	a *meowBlockRef
+	b *meowBlockRef
+	c *meowBlockRef
+}
+
 type meowGroupData struct {
 	kind      int
 	width     int
@@ -489,20 +501,18 @@ func prepareMeowLayer(layer gpt2.LayerData, L int, rho string) meowLayerData {
 	opIndex++
 
 	for head := range layer.Spec.Attention.Heads {
-		attention.Heads[head] = meowAttentionHeadData{
-			Score: prepareMeowMatmulBase(
-				opIndex,
-				layer.Spec.Attention.Heads[head].Score,
-				layer.Attention.Heads[head].Q,
-				layer.Attention.Heads[head].KT,
-				layer.Attention.Heads[head].Score,
-				groups,
-				rho,
-			),
-		}
+		score := prepareMeowMatmulBase(
+			opIndex,
+			layer.Spec.Attention.Heads[head].Score,
+			layer.Attention.Heads[head].Q,
+			layer.Attention.Heads[head].KT,
+			layer.Attention.Heads[head].Score,
+			groups,
+			rho,
+		)
 		opIndex++
 
-		attention.Heads[head].Value = prepareMeowMatmulBase(
+		value := prepareMeowMatmulBaseWithReuse(
 			opIndex,
 			layer.Spec.Attention.Heads[head].Value,
 			layer.Attention.Heads[head].Score,
@@ -510,7 +520,9 @@ func prepareMeowLayer(layer gpt2.LayerData, L int, rho string) meowLayerData {
 			layer.Attention.Heads[head].Context,
 			groups,
 			rho,
+			meowMatmulReuse{a: meowCBlockRef(&score)},
 		)
+		attention.Heads[head] = meowAttentionHeadData{Score: score, Value: value}
 		opIndex++
 	}
 
@@ -525,26 +537,19 @@ func prepareMeowLayer(layer gpt2.LayerData, L int, rho string) meowLayerData {
 	)
 	opIndex++
 
-	data := meowLayerData{
-		Input:     layer.Input,
-		Output:    layer.Output,
-		Groups:    groups,
-		Attention: attention,
-		MLP: meowMLPData{
-			Up: prepareMeowMatmulBase(
-				opIndex,
-				layer.Spec.MLP.Up,
-				layer.Attention.Output,
-				layer.MLP.WUp,
-				layer.MLP.Hidden,
-				groups,
-				rho,
-			),
-		},
-	}
+	mlpUp := prepareMeowMatmulBaseWithReuse(
+		opIndex,
+		layer.Spec.MLP.Up,
+		layer.Attention.Output,
+		layer.MLP.WUp,
+		layer.MLP.Hidden,
+		groups,
+		rho,
+		meowMatmulReuse{a: meowCBlockRef(&attention.Projection)},
+	)
 	opIndex++
 
-	data.MLP.Down = prepareMeowMatmulBase(
+	mlpDown := prepareMeowMatmulBaseWithReuse(
 		opIndex,
 		layer.Spec.MLP.Down,
 		layer.MLP.Hidden,
@@ -552,7 +557,16 @@ func prepareMeowLayer(layer gpt2.LayerData, L int, rho string) meowLayerData {
 		layer.MLP.Output,
 		groups,
 		rho,
+		meowMatmulReuse{a: meowCBlockRef(&mlpUp)},
 	)
+
+	data := meowLayerData{
+		Input:     layer.Input,
+		Output:    layer.Output,
+		Groups:    groups,
+		Attention: attention,
+		MLP:       meowMLPData{Up: mlpUp, Down: mlpDown},
+	}
 
 	commitMeowMatrixGroups(data.Groups)
 	for _, d := range meowMatmulsInOrder(&data) {
@@ -566,6 +580,10 @@ func prepareMeowLayer(layer gpt2.LayerData, L int, rho string) meowLayerData {
 }
 
 func prepareMeowMatmulBase(opIndex int, claim gpt2.MatmulClaim, A, B, C [][]fr.Element, groups []meowGroupData, rho string) meowMatmulData {
+	return prepareMeowMatmulBaseWithReuse(opIndex, claim, A, B, C, groups, rho, meowMatmulReuse{})
+}
+
+func prepareMeowMatmulBaseWithReuse(opIndex int, claim gpt2.MatmulClaim, A, B, C [][]fr.Element, groups []meowGroupData, rho string, reuse meowMatmulReuse) meowMatmulData {
 	kx := nextPowerOfTwo(claim.Inner)
 	ky := nextPowerOfTwo(claim.Cols)
 	nx := codewordSize(kx, rho)
@@ -587,9 +605,28 @@ func prepareMeowMatmulBase(opIndex int, claim gpt2.MatmulClaim, A, B, C [][]fr.E
 		innerGroup:  innerGroup,
 		scalarGroup: scalarGroup,
 	}
-	layout.aBase = appendMeowBlocks(&groups[rowsGroup], colsEncA)
-	layout.cBase = appendMeowBlocks(&groups[rowsGroup], colsEncC)
-	layout.bBase = appendMeowBlocks(&groups[innerGroup], colsEncB)
+
+	if reuse.a != nil {
+		ensureReusableMeowBlocks(claim.Name, "A", rowsGroup, colsEncA, *reuse.a)
+		layout.aBase = reuse.a.base
+		colsEncA = reuse.a.blocks
+	} else {
+		layout.aBase = appendMeowBlocks(&groups[rowsGroup], colsEncA)
+	}
+	if reuse.c != nil {
+		ensureReusableMeowBlocks(claim.Name, "C", rowsGroup, colsEncC, *reuse.c)
+		layout.cBase = reuse.c.base
+		colsEncC = reuse.c.blocks
+	} else {
+		layout.cBase = appendMeowBlocks(&groups[rowsGroup], colsEncC)
+	}
+	if reuse.b != nil {
+		ensureReusableMeowBlocks(claim.Name, "B", innerGroup, colsEncB, *reuse.b)
+		layout.bBase = reuse.b.base
+		colsEncB = reuse.b.blocks
+	} else {
+		layout.bBase = appendMeowBlocks(&groups[innerGroup], colsEncB)
+	}
 
 	return meowMatmulData{
 		opIndex: opIndex,
@@ -598,6 +635,33 @@ func prepareMeowMatmulBase(opIndex int, claim gpt2.MatmulClaim, A, B, C [][]fr.E
 		kx:      kx, ky: ky, nx: nx, ny: ny,
 		colsEncA: colsEncA, colsEncB: colsEncB, colsEncC: colsEncC,
 		sourceA: A, sourceB: B,
+	}
+}
+
+func meowCBlockRef(d *meowMatmulData) *meowBlockRef {
+	return &meowBlockRef{
+		group:  d.layout.rowsGroup,
+		base:   d.layout.cBase,
+		blocks: d.colsEncC,
+	}
+}
+
+func ensureReusableMeowBlocks(claimName, role string, expectedGroup int, encoded [][]fr.Element, ref meowBlockRef) {
+	if ref.group != expectedGroup {
+		log.Fatalf("cannot reuse %s.%s blocks from group %d in group %d", claimName, role, ref.group, expectedGroup)
+	}
+	if len(encoded) != len(ref.blocks) {
+		log.Fatalf("cannot reuse %s.%s blocks: encoded length %d != reference length %d", claimName, role, len(encoded), len(ref.blocks))
+	}
+	for i := range encoded {
+		if len(encoded[i]) != len(ref.blocks[i]) {
+			log.Fatalf("cannot reuse %s.%s block %d: width %d != reference width %d", claimName, role, i, len(encoded[i]), len(ref.blocks[i]))
+		}
+		for j := range encoded[i] {
+			if !encoded[i][j].Equal(&ref.blocks[i][j]) {
+				log.Fatalf("cannot reuse %s.%s block %d element %d: encoded value differs from reference", claimName, role, i, j)
+			}
+		}
 	}
 }
 

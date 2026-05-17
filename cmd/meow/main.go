@@ -213,6 +213,7 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.M
 	// 4. Circuit Compile & Setup
 	// =========================================================================
 	fmt.Println("=== Circuit Setup & Prove ===")
+	startSetup := time.Now()
 	domainN := fft.NewDomain(uint64(N))
 	rootsN := crypto.GetDomainRoots(domainN, N)
 	weightsN := crypto.PrecomputeBarycentricWeights(rootsN)
@@ -241,6 +242,7 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.M
 	nbConstraints := r1csSystem.GetNbConstraints()
 
 	pk, vk, _ := groth16.Setup(r1csSystem)
+	setupTime := time.Since(startSetup).Seconds()
 
 	// =========================================================================
 	// 5. Generate Proof
@@ -473,6 +475,7 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.M
 		N:                 N,
 		NumQueries:        L,
 		Constraints:       nbConstraints,
+		SetupTime:         setupTime,
 		MatrixComputeTime: MatrixComputeTime,
 		MatrixCommitTime:  matCommitTime,
 		VectorCommitTime:  vecCommitTime,
