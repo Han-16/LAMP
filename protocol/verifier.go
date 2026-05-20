@@ -34,6 +34,22 @@ func (v *Verifier) VerifyMembership(root fr.Element, commitment bn254.G1Affine, 
 	return currHash.Equal(&root)
 }
 
+func (v *Verifier) VerifyMembershipWithMeta(root fr.Element, commitment bn254.G1Affine, meta crypto.MerkleLeafMeta, proof []fr.Element, idx int, depth int) bool {
+	currHash := crypto.HashPointWithMeta(commitment, meta)
+	currIdx := idx
+
+	for level := 0; level < depth; level++ {
+		sibling := proof[level]
+		if currIdx%2 == 0 {
+			currHash = crypto.HashElements(currHash, sibling)
+		} else {
+			currHash = crypto.HashElements(sibling, currHash)
+		}
+		currIdx /= 2
+	}
+	return currHash.Equal(&root)
+}
+
 func (v *Verifier) VerifyGroth16(proof groth16.Proof, publicWitness witness.Witness) error {
 	return groth16.Verify(proof, v.VK, publicWitness)
 }

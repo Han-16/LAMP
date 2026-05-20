@@ -89,10 +89,14 @@ func (e *Encoder) EncodeMatrix(matrix [][]fr.Element) ([][]fr.Element, [][]fr.El
 		return nil, nil, fmt.Errorf("matrix must have exactly K (%d) rows, got %d", e.k, len(matrix))
 	}
 
-	coeffsMatrix := make([][]fr.Element, e.k)
-	encodedMatrix := make([][]fr.Element, e.k)
+	return e.EncodeRows(matrix)
+}
 
-	for i, row := range matrix {
+func (e *Encoder) EncodeRows(rows [][]fr.Element) ([][]fr.Element, [][]fr.Element, error) {
+	coeffsMatrix := make([][]fr.Element, len(rows))
+	encodedMatrix := make([][]fr.Element, len(rows))
+
+	for i, row := range rows {
 		coeffs, encRow, err := e.Encode(row)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to encode row %d: %w", i, err)
