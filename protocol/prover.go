@@ -55,6 +55,14 @@ func (p *Prover) CommitMatrixBlinded(matrix [][]fr.Element, depth int) ([][]fr.E
 	return tree, root, cm, blindings
 }
 
+func (p *Prover) CommitMatrixBlindedWithKey(matrix [][]fr.Element, depth int, ck crypto.CommitKey) ([][]fr.Element, fr.Element, []bn254.G1Affine, []fr.Element) {
+	cm, blindings := crypto.BatchPedersenCommitBlinded(matrix, ck)
+
+	tree, root := crypto.BuildMerkleTreeFromGroupElements(cm, depth)
+
+	return tree, root, cm, blindings
+}
+
 func (p *Prover) CommitScalarsBlinded(scalars []fr.Element, depth int, ckScalar crypto.CommitKey) ([][]fr.Element, fr.Element, []bn254.G1Affine, []fr.Element) {
 	matrix := make([][]fr.Element, len(scalars))
 	for i, s := range scalars {
