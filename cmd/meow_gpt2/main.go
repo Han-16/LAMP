@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Han-16/meow/benchmark"
@@ -108,6 +109,22 @@ type claimWitness struct {
 	indicesOut []int
 	rsPointX   fr.Element
 	rsPointYZ  fr.Element
+	skipRSX    bool
+	skipRSYZ   bool
+}
+
+type rsBatchTermWitness struct {
+	claimIndex int
+	side       int
+}
+
+type rsBatchWitness struct {
+	id      int
+	name    string
+	k       int
+	n       int
+	terms   []rsBatchTermWitness
+	rsPoint fr.Element
 }
 
 type preparedLayer struct {
@@ -122,9 +139,12 @@ type preparedLayer struct {
 	tensorCm fr.Element
 	globalCm fr.Element
 
+	domainCache map[domainCacheKey]domains
+
 	inputTensor     *tensor
 	outputTensor    *tensor
 	claims          []claimWitness
+	rsBatches       []rsBatchWitness
 	equalityChecks  []circuit.MeowGPT2EntryEqualityCheck
 	transposeChecks []circuit.MeowGPT2TransposeCheck
 
@@ -341,6 +361,7 @@ func prepareLayer(seqLog int, rho string, L int) *preparedLayer {
 		seqLen:      seqLen,
 		rho:         rho,
 		L:           L,
+		domainCache: make(map[domainCacheKey]domains),
 		scalarCache: make(map[string]int),
 	}
 
@@ -367,6 +388,7 @@ func prepareLayer(seqLog int, rho string, L int) *preparedLayer {
 	p.buildGroupTree(groupScalar)
 	p.globalCm = crypto.HashElementsMiMC(p.extGroups[groupS].root, p.extGroups[groupD].root, p.extGroups[groupDh].root, p.extGroups[groupM].root, p.extGroups[groupScalar].root)
 
+	p.addScoreValueRSBatches()
 	for i := range p.claims {
 		p.sampleClaim(&p.claims[i])
 	}
@@ -387,6 +409,7 @@ func prepareLayerShapeOnly(seqLog int, rho string, L int) *preparedLayer {
 		seqLen:      seqLen,
 		rho:         rho,
 		L:           L,
+		domainCache: make(map[domainCacheKey]domains),
 		scalarCache: make(map[string]int),
 	}
 	p.initGroups()
@@ -398,6 +421,7 @@ func prepareLayerShapeOnly(seqLog int, rho string, L int) *preparedLayer {
 	for _, spec := range specs {
 		p.claims = append(p.claims, claimWitness{spec: spec})
 	}
+	p.addScoreValueRSBatches()
 	p.addPackedAttentionChecks(tensors, L)
 	return p
 }
@@ -651,14 +675,103 @@ func (p *preparedLayer) sampleClaim(claim *claimWitness) {
 	if err != nil {
 		log.Fatalf("failed to sample output indices for %s: %v", claim.spec.name, err)
 	}
-	claim.rsPointX, err = protocol.GenerateRSEvaluationPointWithLabel(p.globalCm, labelFor(claim.spec.id, 3), NIn, nil)
-	if err != nil {
-		log.Fatalf("failed to sample RS point X for %s: %v", claim.spec.name, err)
+
+	var excludedPoint *fr.Element
+	if !claim.skipRSX {
+		claim.rsPointX, err = protocol.GenerateRSEvaluationPointWithLabel(p.globalCm, labelFor(claim.spec.id, 3), NIn, nil)
+		if err != nil {
+			log.Fatalf("failed to sample RS point X for %s: %v", claim.spec.name, err)
+		}
+		excludedPoint = &claim.rsPointX
 	}
-	claim.rsPointYZ, err = protocol.GenerateRSEvaluationPointWithLabel(p.globalCm, labelFor(claim.spec.id, 4), NOut, &claim.rsPointX)
-	if err != nil {
-		log.Fatalf("failed to sample RS point YZ for %s: %v", claim.spec.name, err)
+	if !claim.skipRSYZ {
+		claim.rsPointYZ, err = protocol.GenerateRSEvaluationPointWithLabel(p.globalCm, labelFor(claim.spec.id, 4), NOut, excludedPoint)
+		if err != nil {
+			log.Fatalf("failed to sample RS point YZ for %s: %v", claim.spec.name, err)
+		}
 	}
+}
+
+func (p *preparedLayer) addScoreValueRSBatches() {
+	scoreClaims := p.claimIndicesByPrefix("score_")
+	valueClaims := p.claimIndicesByPrefix("value_")
+	if len(scoreClaims) != gpt2Heads {
+		log.Fatalf("expected %d score claims for RS batching, got %d", gpt2Heads, len(scoreClaims))
+	}
+	if len(valueClaims) != gpt2Heads {
+		log.Fatalf("expected %d value claims for RS batching, got %d", gpt2Heads, len(valueClaims))
+	}
+
+	p.addRSBatch("score.x", gpt2Dh, codewordLength(gpt2Dh, p.rho), scoreClaims, circuit.MeowGPT2RSSideX)
+	p.addRSBatch("score.yz", p.seqLen, codewordLength(p.seqLen, p.rho), scoreClaims, circuit.MeowGPT2RSSideYZ)
+	p.addRSBatch("value.x", p.seqLen, codewordLength(p.seqLen, p.rho), valueClaims, circuit.MeowGPT2RSSideX)
+	p.addRSBatch("value.yz", gpt2Dh, codewordLength(gpt2Dh, p.rho), valueClaims, circuit.MeowGPT2RSSideYZ)
+}
+
+func (p *preparedLayer) claimIndicesByPrefix(prefix string) []int {
+	indices := make([]int, 0, gpt2Heads)
+	for i := range p.claims {
+		if strings.HasPrefix(p.claims[i].spec.name, prefix) {
+			indices = append(indices, i)
+		}
+	}
+	return indices
+}
+
+func (p *preparedLayer) addRSBatch(name string, k, n int, claimIndices []int, side int) {
+	id := len(p.rsBatches)
+	terms := make([]rsBatchTermWitness, 0, len(claimIndices))
+
+	for _, claimIndex := range claimIndices {
+		if claimIndex < 0 || claimIndex >= len(p.claims) {
+			log.Fatalf("invalid claim index %d for RS batch %s", claimIndex, name)
+		}
+
+		claim := &p.claims[claimIndex]
+		p.markClaimRSBatched(claim, claimIndex, side, k, n, name)
+		terms = append(terms, rsBatchTermWitness{claimIndex: claimIndex, side: side})
+	}
+
+	rsPoint, err := protocol.GenerateRSEvaluationPointWithLabel(p.globalCm, labelForRSBatch(id), n, nil)
+	if err != nil {
+		log.Fatalf("failed to sample RS point for batch %s: %v", name, err)
+	}
+
+	p.rsBatches = append(p.rsBatches, rsBatchWitness{
+		id:      id,
+		name:    name,
+		k:       k,
+		n:       n,
+		terms:   terms,
+		rsPoint: rsPoint,
+	})
+}
+
+func (p *preparedLayer) markClaimRSBatched(claim *claimWitness, claimIndex int, side int, k int, n int, batchName string) {
+	switch side {
+	case circuit.MeowGPT2RSSideX:
+		if claim.spec.A.cols != k || codewordLength(claim.spec.A.cols, p.rho) != n {
+			log.Fatalf("invalid X-side domain for claim %s in RS batch %s", claim.spec.name, batchName)
+		}
+		if claim.skipRSX {
+			log.Fatalf("claim %s X-side was already assigned to an RS batch", claim.spec.name)
+		}
+		claim.skipRSX = true
+	case circuit.MeowGPT2RSSideYZ:
+		if claim.spec.C.cols != k || codewordLength(claim.spec.C.cols, p.rho) != n {
+			log.Fatalf("invalid YZ-side domain for claim %s in RS batch %s", claim.spec.name, batchName)
+		}
+		if claim.skipRSYZ {
+			log.Fatalf("claim %s YZ-side was already assigned to an RS batch", claim.spec.name)
+		}
+		claim.skipRSYZ = true
+	default:
+		log.Fatalf("unknown RS side %d for claim %d in batch %s", side, claimIndex, batchName)
+	}
+}
+
+func labelForRSBatch(id int) uint64 {
+	return uint64(30000 + id)
 }
 
 func (p *preparedLayer) addClaimSamples() {
@@ -866,6 +979,7 @@ func buildCircuit(p *preparedLayer, assignment bool) *circuit.MeowGPT2Circuit {
 	for i := range p.claims {
 		claims[i] = buildCircuitClaim(p, &p.claims[i], assignment)
 	}
+	rsBatches := buildCircuitRSBatches(p, assignment)
 
 	c := &circuit.MeowGPT2Circuit{
 		Input:        make([]frontend.Variable, p.seqLen*gpt2D),
@@ -882,6 +996,7 @@ func buildCircuit(p *preparedLayer, assignment bool) *circuit.MeowGPT2Circuit {
 		TensorCm:        p.tensorCm,
 		GlobalCm:        p.globalCm,
 		Claims:          claims,
+		RSBatches:       rsBatches,
 		EqualityChecks:  cloneEqualityChecks(p.equalityChecks),
 		TransposeChecks: cloneTransposeChecks(p.transposeChecks),
 	}
@@ -943,16 +1058,40 @@ func cloneTransposeChecks(src []circuit.MeowGPT2TransposeCheck) []circuit.MeowGP
 	return out
 }
 
+func buildCircuitRSBatches(p *preparedLayer, assignment bool) []circuit.MeowGPT2RSBatch {
+	out := make([]circuit.MeowGPT2RSBatch, len(p.rsBatches))
+	for i := range p.rsBatches {
+		batch := &p.rsBatches[i]
+		d := p.cachedDomainBundle(batch.k, batch.n, !assignment)
+		out[i] = circuit.MeowGPT2RSBatch{
+			ID:       batch.id,
+			K:        batch.k,
+			N:        batch.n,
+			DomainK:  d.domainK,
+			WeightsK: d.weightsK,
+			DomainN:  d.domainN,
+			WeightsN: d.weightsN,
+			Terms:    make([]circuit.MeowGPT2RSBatchTerm, len(batch.terms)),
+		}
+		for j := range batch.terms {
+			out[i].Terms[j] = circuit.MeowGPT2RSBatchTerm{
+				ClaimIndex: batch.terms[j].claimIndex,
+				Side:       batch.terms[j].side,
+			}
+		}
+		if assignment {
+			out[i].RSPoint = batch.rsPoint
+		}
+	}
+	return out
+}
+
 func buildCircuitClaim(p *preparedLayer, w *claimWitness, assignment bool) circuit.MeowGPT2RectClaim {
 	spec := w.spec
 	rows, inner, cols := spec.A.rows, spec.A.cols, spec.C.cols
 	NIn, NOut := codewordLength(inner, p.rho), codewordLength(cols, p.rho)
-	startDomainSetup := time.Now()
-	dIn := domainBundle(inner, NIn)
-	dOut := domainBundle(cols, NOut)
-	if !assignment {
-		p.setupTime += time.Since(startDomainSetup).Seconds()
-	}
+	dIn := p.cachedDomainBundle(inner, NIn, !assignment)
+	dOut := p.cachedDomainBundle(cols, NOut, !assignment)
 
 	claim := circuit.MeowGPT2RectClaim{
 		ID: spec.id, Rows: rows, Inner: inner, Cols: cols, NIn: NIn, NOut: NOut,
@@ -970,6 +1109,8 @@ func buildCircuitClaim(p *preparedLayer, w *claimWitness, assignment bool) circu
 		TargetYZScalars:  make([]int, p.L),
 		BindPublicInput:  spec.A.name == "X",
 		BindPublicOutput: spec.C.name == "Out",
+		SkipRSX:          w.skipRSX,
+		SkipRSYZ:         w.skipRSYZ,
 		VecX:             make([]frontend.Variable, inner),
 		VecYZ:            make([]frontend.Variable, cols),
 		EncX:             make([]frontend.Variable, NIn),
@@ -997,8 +1138,16 @@ func buildCircuitClaim(p *preparedLayer, w *claimWitness, assignment bool) circu
 	}
 
 	if assignment {
-		claim.RSPointX = w.rsPointX
-		claim.RSPointYZ = w.rsPointYZ
+		if !w.skipRSX {
+			claim.RSPointX = w.rsPointX
+		} else {
+			claim.RSPointX = 0
+		}
+		if !w.skipRSYZ {
+			claim.RSPointYZ = w.rsPointYZ
+		} else {
+			claim.RSPointYZ = 0
+		}
 		for i := range w.vecX {
 			claim.VecX[i] = w.vecX[i]
 		}
@@ -1033,6 +1182,11 @@ type domains struct {
 	weightsN []fr.Element
 }
 
+type domainCacheKey struct {
+	k int
+	n int
+}
+
 func domainBundle(k, n int) domains {
 	domainK := fft.NewDomain(uint64(k))
 	rootsK := crypto.GetDomainRoots(domainK, k)
@@ -1044,6 +1198,21 @@ func domainBundle(k, n int) domains {
 		domainN:  rootsN,
 		weightsN: crypto.PrecomputeBarycentricWeights(rootsN),
 	}
+}
+
+func (p *preparedLayer) cachedDomainBundle(k, n int, countSetupTime bool) domains {
+	key := domainCacheKey{k: k, n: n}
+	if d, ok := p.domainCache[key]; ok {
+		return d
+	}
+
+	start := time.Now()
+	d := domainBundle(k, n)
+	if countSetupTime {
+		p.setupTime += time.Since(start).Seconds()
+	}
+	p.domainCache[key] = d
+	return d
 }
 
 func codewordLength(k int, rho string) int {
