@@ -172,7 +172,7 @@ go run ./cmd/meow_gpt2 --seq 0 --rho 1/2 --L 1 --compile
   runs.
 - GPT-2 benchmarks use public input/output sequences and prove the matmul-only
   layer relation over generated random matrices.
-- GPT-2 benchmarks use the packed-QKV 36-claim computation graph by default:
+- GPT-2 benchmarks use the packed-QKV computation graph by default:
   QKV is one projection, heads are concatenated, and the output projection is
   one matrix multiplication. The Meow variant uses a power-of-two packed QKV
   domain, so the actual 3D QKV columns are followed by a zero-padded 1D region.
