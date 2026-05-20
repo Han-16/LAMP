@@ -10,9 +10,7 @@ import (
 	"github.com/Han-16/meow/benchmark"
 	"github.com/Han-16/meow/circuit"
 	"github.com/Han-16/meow/config"
-	"github.com/Han-16/meow/crypto"
 	"github.com/Han-16/meow/matrix"
-	"github.com/Han-16/meow/protocol"
 
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark/backend/groth16"
@@ -105,10 +103,9 @@ func runExperiment(logK int, onlyCompile bool) benchmark.FreivaldsResult {
 	fmt.Printf("   ✅ Matrix Compute Time: %.2f s\n", matrixComputeTime)
 
 	// =========================================================================
-	// 2. Circuit Setup (Compile & Groth16 Setup)
+	// 2. Circuit Compilation & Groth16 Setup
 	// =========================================================================
 	fmt.Println("=== 2. Circuit Compilation & Setup ===")
-	startSetup := time.Now()
 
 	emptyCircuit := newFreivaldsCircuit(K)
 
@@ -117,6 +114,7 @@ func runExperiment(logK int, onlyCompile bool) benchmark.FreivaldsResult {
 		log.Fatalf("❌ Circuit compilation failed: %v", err)
 	}
 
+	startSetup := time.Now()
 	pk, vk, err := groth16.Setup(r1csSystem)
 	if err != nil {
 		log.Fatalf("❌ Groth16 setup failed: %v", err)
@@ -125,9 +123,6 @@ func runExperiment(logK int, onlyCompile bool) benchmark.FreivaldsResult {
 
 	numConstraints := r1csSystem.GetNbConstraints()
 	fmt.Printf("   📊 Constraints: %d\n", numConstraints)
-
-	prover := protocol.NewProver(pk, crypto.CommitKey{}, nil)
-	verifier := protocol.NewVerifier(vk, crypto.CommitKey{}, nil)
 
 	// =========================================================================
 	// 3. Witness Assignment & Proof Generation
@@ -142,8 +137,12 @@ func runExperiment(logK int, onlyCompile bool) benchmark.FreivaldsResult {
 		}
 	}
 
+	witness, err := frontend.NewWitness(assignment, field)
+	if err != nil {
+		log.Fatalf("❌ Witness generation failed: %v", err)
+	}
 	startProve := time.Now()
-	proof, _, _, err := prover.ProveCircuit(r1csSystem, assignment)
+	proof, err := groth16.Prove(r1csSystem, pk, witness)
 	if err != nil {
 		log.Fatalf("❌ Proof generation failed: %v", err)
 	}
@@ -154,16 +153,15 @@ func runExperiment(logK int, onlyCompile bool) benchmark.FreivaldsResult {
 	// 4. Verification
 	// =========================================================================
 	fmt.Println("=== 4. Verifying Proof ===")
-	startVerify := time.Now()
 
 	// Public Witness 추출
-	witness, _ := frontend.NewWitness(assignment, field)
 	publicWitness, err := witness.Public()
 	if err != nil {
 		log.Fatalf("❌ Public witness extraction failed: %v", err)
 	}
 
-	err = verifier.VerifyGroth16(proof, publicWitness)
+	startVerify := time.Now()
+	err = groth16.Verify(proof, vk, publicWitness)
 	if err != nil {
 		log.Fatalf("❌ Verification FAILED: %v", err)
 	}

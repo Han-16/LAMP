@@ -138,7 +138,9 @@ type preparedLayer struct {
 	scalarCache     map[string]int
 
 	matrixComputeTime float64
+	setupTime         float64
 	commitTime        float64
+	merkleProveTime   float64
 }
 
 func main() {
@@ -193,11 +195,11 @@ func runExperiment(seqLog int, rho string, L int, onlyCompile bool) benchmark.Me
 		prep = prepareLayerShapeOnly(seqLog, rho, L)
 	} else {
 		prep = prepareLayer(seqLog, rho, L)
+		fmt.Printf("   ✅ Matrix Compute Time: %.2f s\n", prep.matrixComputeTime)
 	}
 	emptyCircuit := buildCircuit(prep, false)
 
 	field := ecc.BN254.ScalarField()
-	startSetup := time.Now()
 	r1csSystem, err := frontend.Compile(field, r1cs.NewBuilder, emptyCircuit)
 	if err != nil {
 		log.Fatalf("Meow GPT-2 compilation failed: %v", err)
@@ -215,29 +217,39 @@ func runExperiment(seqLog int, rho string, L int, onlyCompile bool) benchmark.Me
 			NumCommitGroups:   numGroups,
 			Constraints:       nbConstraints,
 			MatrixComputeTime: prep.matrixComputeTime,
+			SetupTime:         prep.setupTime,
 			CommitTime:        prep.commitTime,
+			MerkleProveTime:   prep.merkleProveTime,
 		}
 	}
 
+	startSetup := time.Now()
 	pk, vk, err := groth16.Setup(r1csSystem)
 	if err != nil {
 		log.Fatalf("Meow GPT-2 setup failed: %v", err)
 	}
-	setupTime := time.Since(startSetup).Seconds()
+	setupTime := prep.setupTime + time.Since(startSetup).Seconds()
 
 	assignment := buildCircuit(prep, true)
+	startProtocolBindSetup := time.Now()
 	prover := protocol.NewProver(pk, prep.extGroups[groupS].ck, nil)
 	verifier := protocol.NewVerifier(vk, prep.extGroups[groupS].ck, prover.CK2)
+	setupTime += time.Since(startProtocolBindSetup).Seconds()
 
+	proofWitness, err := frontend.NewWitness(assignment, field)
+	if err != nil {
+		log.Fatalf("failed to build witness for proving: %v", err)
+	}
 	startCircuitProve := time.Now()
-	proof, cmVec2, blindingsIn, err := prover.ProveCircuit(r1csSystem, assignment)
+	proof, err := groth16.Prove(r1csSystem, pk, proofWitness)
 	if err != nil {
 		log.Fatalf("Meow GPT-2 proof failed: %v", err)
 	}
+	circuitProveTime := time.Since(startCircuitProve).Seconds()
+	cmVec2, blindingsIn := protocol.ExtractGroth16CommitmentsAndBlindings(proof)
 	if len(cmVec2) < numGroups || len(blindingsIn) < numGroups || len(prover.CK2) < numGroups {
 		log.Fatalf("expected %d committed groups, got commitments=%d blindings=%d keys=%d", numGroups, len(cmVec2), len(blindingsIn), len(prover.CK2))
 	}
-	circuitProveTime := time.Since(startCircuitProve).Seconds()
 
 	startOffline := time.Now()
 	linkProofs := make([]crypto.AmComEqProof, numGroups)
@@ -251,18 +263,14 @@ func runExperiment(seqLog int, rho string, L int, onlyCompile bool) benchmark.Me
 	}
 	cpLinkProveTime := time.Since(startOffline).Seconds()
 
-	startVerify := time.Now()
-	witnessForVerify, err := frontend.NewWitness(assignment, field)
-	if err != nil {
-		log.Fatalf("failed to build witness for verification: %v", err)
-	}
-	publicWitness, err := witnessForVerify.Public()
+	publicWitness, err := proofWitness.Public()
 	if err != nil {
 		log.Fatalf("failed to build public witness: %v", err)
 	}
 
+	startVerify := time.Now()
 	startCircuitVerify := time.Now()
-	if err := verifier.VerifyGroth16(proof, publicWitness); err != nil {
+	if err := groth16.Verify(proof, vk, publicWitness); err != nil {
 		log.Fatalf("Meow GPT-2 Groth16 verification failed: %v", err)
 	}
 	circuitVerifyTime := time.Since(startCircuitVerify).Seconds()
@@ -295,7 +303,7 @@ func runExperiment(seqLog int, rho string, L int, onlyCompile bool) benchmark.Me
 		cpLinkProofSize += crypto.AmComEqProofSizeBytes(linkProofs[i])
 	}
 	totalProofSize := groth16ProofSize + merkleProofSize + cpLinkProofSize
-	totalProveTime := prep.matrixComputeTime + prep.commitTime + circuitProveTime + cpLinkProveTime
+	totalProveTime := prep.commitTime + prep.merkleProveTime + circuitProveTime + cpLinkProveTime
 
 	fmt.Println("Meow GPT-2 proof verified successfully")
 	fmt.Printf("Proof sizes: Groth16=%d B, Merkle=%d B, CPLink=%d B, Total=%d B\n", groth16ProofSize, merkleProofSize, cpLinkProofSize, totalProofSize)
@@ -311,6 +319,7 @@ func runExperiment(seqLog int, rho string, L int, onlyCompile bool) benchmark.Me
 		MatrixComputeTime: prep.matrixComputeTime,
 		SetupTime:         setupTime,
 		CommitTime:        prep.commitTime,
+		MerkleProveTime:   prep.merkleProveTime,
 		CircuitProveTime:  circuitProveTime,
 		CPLinkProveTime:   cpLinkProveTime,
 		TotalProveTime:    totalProveTime,
@@ -337,12 +346,11 @@ func prepareLayer(seqLog int, rho string, L int) *preparedLayer {
 
 	p.initGroups()
 
-	startCompute := time.Now()
-	tensors, specs := buildGPT2MediumTensors(seqLen)
+	tensors, specs, matrixComputeTime := buildGPT2MediumTensors(seqLen)
 	byName := tensorMap(tensors)
 	p.inputTensor = byName["X"]
 	p.outputTensor = byName["Out"]
-	p.matrixComputeTime = time.Since(startCompute).Seconds()
+	p.matrixComputeTime = matrixComputeTime
 
 	startCommit := time.Now()
 	for _, t := range tensors {
@@ -362,8 +370,12 @@ func prepareLayer(seqLog int, rho string, L int) *preparedLayer {
 	for i := range p.claims {
 		p.sampleClaim(&p.claims[i])
 	}
+	p.addClaimSamples()
 	p.addPackedAttentionChecks(tensors, L)
-	p.commitTime = time.Since(startCommit).Seconds()
+	p.commitTime = time.Since(startCommit).Seconds() - p.merkleProveTime
+	if p.commitTime < 0 {
+		p.commitTime = 0
+	}
 
 	return p
 }
@@ -391,11 +403,13 @@ func prepareLayerShapeOnly(seqLog int, rho string, L int) *preparedLayer {
 }
 
 func (p *preparedLayer) initGroups() {
+	startSetup := time.Now()
 	p.extGroups[groupS] = newExtGroup(groupS, p.seqLen)
 	p.extGroups[groupD] = newExtGroup(groupD, gpt2D)
 	p.extGroups[groupDh] = newExtGroup(groupDh, gpt2Dh)
 	p.extGroups[groupM] = newExtGroup(groupM, gpt2M)
 	p.extGroups[groupScalar] = newExtGroup(groupScalar, 1)
+	p.setupTime += time.Since(startSetup).Seconds()
 	for i := 0; i < numGroups; i++ {
 		p.sampleGroups[i] = &sampleGroup{
 			blockLen: p.extGroups[i].blockLen,
@@ -412,10 +426,11 @@ func newExtGroup(id, blockLen int) *extGroup {
 	}
 }
 
-func buildGPT2MediumTensors(seqLen int) ([]*tensor, []claimSpec) {
+func buildGPT2MediumTensors(seqLen int) ([]*tensor, []claimSpec, float64) {
 	nextID := 0
 	tensors := make([]*tensor, 0)
 	claims := make([]claimSpec, 0)
+	var matrixComputeTime time.Duration
 
 	newTensor := func(name string, data [][]fr.Element, group int) *tensor {
 		rows := len(data)
@@ -428,11 +443,17 @@ func buildGPT2MediumTensors(seqLen int) ([]*tensor, []claimSpec) {
 	addClaim := func(name string, A, B, C *tensor) {
 		claims = append(claims, claimSpec{id: len(claims), name: name, A: A, B: B, C: C})
 	}
+	matMulRect := func(A, B [][]fr.Element, rows, inner, cols int) [][]fr.Element {
+		start := time.Now()
+		out := matrix.MatMulRect(A, B, rows, inner, cols)
+		matrixComputeTime += time.Since(start)
+		return out
+	}
 
 	X := newTensor("X", matrix.GenerateRandomMatrix(seqLen, gpt2D), groupS)
 
 	WQKV := newTensor("WQKV", generatePaddedQKVWeights(), groupD)
-	QKV := newTensor("QKV", matrix.MatMulRect(X.data, WQKV.data, seqLen, gpt2D, gpt2PackedQKVCols), groupS)
+	QKV := newTensor("QKV", matMulRect(X.data, WQKV.data, seqLen, gpt2D, gpt2PackedQKVCols), groupS)
 	addClaim("qkv_proj", X, WQKV, QKV)
 
 	Ctxs := make([]*tensor, gpt2Heads)
@@ -442,8 +463,8 @@ func buildGPT2MediumTensors(seqLen int) ([]*tensor, []claimSpec) {
 		V := newTensor(fmt.Sprintf("V_%02d", h), sliceColumns(QKV.data, 2*gpt2D+h*gpt2Dh, gpt2Dh), groupS)
 		KT := newTensor(fmt.Sprintf("KT_%02d", h), matrix.Transpose(K.data, seqLen, gpt2Dh), groupDh)
 
-		Score := newTensor(fmt.Sprintf("Score_%02d", h), matrix.MatMulRect(Q.data, KT.data, seqLen, gpt2Dh, seqLen), groupS)
-		Ctx := newTensor(fmt.Sprintf("Ctx_%02d", h), matrix.MatMulRect(Score.data, V.data, seqLen, seqLen, gpt2Dh), groupS)
+		Score := newTensor(fmt.Sprintf("Score_%02d", h), matMulRect(Q.data, KT.data, seqLen, gpt2Dh, seqLen), groupS)
+		Ctx := newTensor(fmt.Sprintf("Ctx_%02d", h), matMulRect(Score.data, V.data, seqLen, seqLen, gpt2Dh), groupS)
 		Ctxs[h] = Ctx
 
 		addClaim(fmt.Sprintf("score_%02d", h), Q, KT, Score)
@@ -452,17 +473,17 @@ func buildGPT2MediumTensors(seqLen int) ([]*tensor, []claimSpec) {
 
 	Context := newTensor("Context", concatHeadColumns(Ctxs, seqLen), groupS)
 	Wout := newTensor("Wout", matrix.GenerateRandomMatrix(gpt2D, gpt2D), groupD)
-	AttnOut := newTensor("AttnOut", matrix.MatMulRect(Context.data, Wout.data, seqLen, gpt2D, gpt2D), groupS)
+	AttnOut := newTensor("AttnOut", matMulRect(Context.data, Wout.data, seqLen, gpt2D, gpt2D), groupS)
 	Wup := newTensor("Wup", matrix.GenerateRandomMatrix(gpt2D, gpt2M), groupD)
-	Hidden := newTensor("Hidden", matrix.MatMulRect(AttnOut.data, Wup.data, seqLen, gpt2D, gpt2M), groupS)
+	Hidden := newTensor("Hidden", matMulRect(AttnOut.data, Wup.data, seqLen, gpt2D, gpt2M), groupS)
 	Wdown := newTensor("Wdown", matrix.GenerateRandomMatrix(gpt2M, gpt2D), groupM)
-	Out := newTensor("Out", matrix.MatMulRect(Hidden.data, Wdown.data, seqLen, gpt2M, gpt2D), groupS)
+	Out := newTensor("Out", matMulRect(Hidden.data, Wdown.data, seqLen, gpt2M, gpt2D), groupS)
 
 	addClaim("attn_out", Context, Wout, AttnOut)
 	addClaim("mlp_up", AttnOut, Wup, Hidden)
 	addClaim("mlp_down", Hidden, Wdown, Out)
 
-	return tensors, claims
+	return tensors, claims, matrixComputeTime.Seconds()
 }
 
 func generatePaddedQKVWeights() [][]fr.Element {
@@ -640,6 +661,21 @@ func (p *preparedLayer) sampleClaim(claim *claimWitness) {
 	}
 }
 
+func (p *preparedLayer) addClaimSamples() {
+	for i := range p.claims {
+		claim := &p.claims[i]
+		for j := 0; j < p.L; j++ {
+			inCol := claim.indicesIn[j]
+			outCol := claim.indicesOut[j]
+			p.addTensorSample(claim.spec.A, inCol)
+			p.addTensorSample(claim.spec.B, outCol)
+			p.addTensorSample(claim.spec.C, outCol)
+			p.addScalarSample(claim.foldX, inCol)
+			p.addScalarSample(claim.foldYZ, outCol)
+		}
+	}
+}
+
 func labelFor(id int, kind uint64) uint64 {
 	return uint64(1000 + id*10 + int(kind))
 }
@@ -671,7 +707,7 @@ func (p *preparedLayer) addTensorSample(t *tensor, col int) int {
 	sg.blindings = append(sg.blindings, ext.blindings[leafIdx])
 	sg.metas = append(sg.metas, ext.metas[leafIdx])
 	sg.leafIndices = append(sg.leafIndices, leafIdx)
-	sg.proofs = append(sg.proofs, crypto.GetMerkleProof(ext.tree, leafIdx, ext.depth))
+	sg.proofs = append(sg.proofs, p.generateMerkleProof(ext, leafIdx))
 	sg.merkleProofSz += ext.depth * 32
 	return idx
 }
@@ -697,8 +733,15 @@ func (p *preparedLayer) addScalarSample(f *foldedCodeword, col int) int {
 	p.scalarBlindings = append(p.scalarBlindings, ext.blindings[leafIdx])
 	p.scalarMetas = append(p.scalarMetas, ext.metas[leafIdx])
 	p.scalarLeafIdx = append(p.scalarLeafIdx, leafIdx)
-	p.scalarProofs = append(p.scalarProofs, crypto.GetMerkleProof(ext.tree, leafIdx, ext.depth))
+	p.scalarProofs = append(p.scalarProofs, p.generateMerkleProof(ext, leafIdx))
 	return idx
+}
+
+func (p *preparedLayer) generateMerkleProof(ext *extGroup, leafIdx int) []fr.Element {
+	start := time.Now()
+	proof := crypto.GetMerkleProof(ext.tree, leafIdx, ext.depth)
+	p.merkleProveTime += time.Since(start).Seconds()
+	return proof
 }
 
 func (p *preparedLayer) addPackedAttentionChecks(tensors []*tensor, L int) {
@@ -904,8 +947,12 @@ func buildCircuitClaim(p *preparedLayer, w *claimWitness, assignment bool) circu
 	spec := w.spec
 	rows, inner, cols := spec.A.rows, spec.A.cols, spec.C.cols
 	NIn, NOut := codewordLength(inner, p.rho), codewordLength(cols, p.rho)
+	startDomainSetup := time.Now()
 	dIn := domainBundle(inner, NIn)
 	dOut := domainBundle(cols, NOut)
+	if !assignment {
+		p.setupTime += time.Since(startDomainSetup).Seconds()
+	}
 
 	claim := circuit.MeowGPT2RectClaim{
 		ID: spec.id, Rows: rows, Inner: inner, Cols: cols, NIn: NIn, NOut: NOut,

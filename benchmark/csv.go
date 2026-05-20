@@ -63,6 +63,7 @@ type MeowResult struct {
 	SetupTime         float64
 	MatrixCommitTime  float64
 	VectorCommitTime  float64
+	MerkleProveTime   float64
 	CircuitProveTime  float64
 	CPLinkProveTime   float64
 	TotalProveTime    float64
@@ -116,6 +117,7 @@ type MeowGPT2Result struct {
 	MatrixComputeTime float64
 	SetupTime         float64
 	CommitTime        float64
+	MerkleProveTime   float64
 	CircuitProveTime  float64
 	CPLinkProveTime   float64
 	TotalProveTime    float64
@@ -163,7 +165,7 @@ func InitMeowCSV(filename string) (*os.File, *csv.Writer) {
 	return initCSV(filename, []string{
 		"LogK", "Rho", "N", "NumQueries", "Constraints",
 		"MatrixComputeTime(s)", "SetupTime(s)",
-		"MatrixCommitTime(s)", "VectorCommitTime(s)", "CircuitProveTime(s)",
+		"MatrixCommitTime(s)", "VectorCommitTime(s)", "MerkleProveTime(s)", "CircuitProveTime(s)",
 		"CPLinkProveTime(s)", "TotalProveTime(s)",
 		"CircuitVerifyTime(s)", "MerkleVerifyTime(s)", "CPLinkVerifyTime(s)", "TotalVerifyTime(s)",
 		"MerkleProofSize(B)", "Groth16ProofSize(B)", "CPLinkProofSize(B)", "TotalProofSize(B)",
@@ -181,6 +183,7 @@ func AppendMeowResultToCSV(writer *csv.Writer, res MeowResult) {
 		formatSeconds(res.SetupTime),
 		formatSeconds(res.MatrixCommitTime),
 		formatSeconds(res.VectorCommitTime),
+		formatSeconds(res.MerkleProveTime),
 		formatSeconds(res.CircuitProveTime),
 		formatSeconds(res.CPLinkProveTime),
 		formatSeconds(res.TotalProveTime),
@@ -242,7 +245,7 @@ func AppendRectMeowResultToCSV(writer *csv.Writer, res RectMeowResult) {
 func InitMeowGPT2CSV(filename string) (*os.File, *csv.Writer) {
 	return initCSV(filename, []string{
 		"SeqLog", "SeqLen", "Rho", "NumQueries", "NumClaims", "NumCommitGroups", "Constraints",
-		"MatrixComputeTime(s)", "SetupTime(s)", "CommitTime(s)", "CircuitProveTime(s)",
+		"MatrixComputeTime(s)", "SetupTime(s)", "CommitTime(s)", "MerkleProveTime(s)", "CircuitProveTime(s)",
 		"CPLinkProveTime(s)", "TotalProveTime(s)",
 		"CircuitVerifyTime(s)", "MerkleVerifyTime(s)", "CPLinkVerifyTime(s)", "TotalVerifyTime(s)",
 		"MerkleProofSize(B)", "Groth16ProofSize(B)", "CPLinkProofSize(B)", "TotalProofSize(B)",
@@ -261,6 +264,7 @@ func AppendMeowGPT2ResultToCSV(writer *csv.Writer, res MeowGPT2Result) {
 		formatSeconds(res.MatrixComputeTime),
 		formatSeconds(res.SetupTime),
 		formatSeconds(res.CommitTime),
+		formatSeconds(res.MerkleProveTime),
 		formatSeconds(res.CircuitProveTime),
 		formatSeconds(res.CPLinkProveTime),
 		formatSeconds(res.TotalProveTime),

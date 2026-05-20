@@ -129,19 +129,23 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.M
 	// =========================================================================
 	// 0. Setup Phase
 	// =========================================================================
+	var setupTime float64
+	startProtocolSetup := time.Now()
 	ck1 := crypto.SetupCommitKey(K)
 	ckScalar := crypto.SetupCommitKey(1)
 	encoder := crypto.NewEncoder(K, N)
 	prover := protocol.NewProver(nil, ck1, encoder)
+	setupTime += time.Since(startProtocolSetup).Seconds()
 
 	// =========================================================================
 	// 1. Compute Matrices A, B, C
 	// =========================================================================
-	startCompute := time.Now()
 	matA := matrix.GenerateRandomMatrix(K, K)
 	matB := matrix.GenerateRandomMatrix(K, K)
+	startCompute := time.Now()
 	matC := matrix.MatMul(matA, matB, K)
-	MatrixComputeTime := time.Since(startCompute).Seconds()
+	matrixComputeTime := time.Since(startCompute).Seconds()
+	fmt.Printf("   ✅ Matrix Compute Time: %.2f s\n", matrixComputeTime)
 
 	// =========================================================================
 	// 2. Encode & Commit Matrices A, B, C
@@ -213,7 +217,7 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.M
 	// 4. Circuit Compile & Setup
 	// =========================================================================
 	fmt.Println("=== Circuit Setup & Prove ===")
-	startSetup := time.Now()
+	startDomainSetup := time.Now()
 	domainN := fft.NewDomain(uint64(N))
 	rootsN := crypto.GetDomainRoots(domainN, N)
 	weightsN := crypto.PrecomputeBarycentricWeights(rootsN)
@@ -221,6 +225,7 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.M
 	domainK := fft.NewDomain(uint64(K))
 	rootsK := crypto.GetDomainRoots(domainK, K)
 	weightsK := crypto.PrecomputeBarycentricWeights(rootsK)
+	setupTime += time.Since(startDomainSetup).Seconds()
 
 	emptyCircuit := &circuit.MeowCircuit{
 		K: K, N: N, Depth: depth,
@@ -241,8 +246,9 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.M
 	r1csSystem, _ := frontend.Compile(field, r1cs.NewBuilder, emptyCircuit)
 	nbConstraints := r1csSystem.GetNbConstraints()
 
+	startSetup := time.Now()
 	pk, vk, _ := groth16.Setup(r1csSystem)
-	setupTime := time.Since(startSetup).Seconds()
+	setupTime += time.Since(startSetup).Seconds()
 
 	// =========================================================================
 	// 5. Generate Proof
@@ -284,21 +290,45 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.M
 		}
 	}
 
+	startProtocolBindSetup := time.Now()
 	proverWithPK := protocol.NewProver(pk, ck1, encoder)
 	verifier := protocol.NewVerifier(vk, ck1, proverWithPK.CK2)
+	setupTime += time.Since(startProtocolBindSetup).Seconds()
 
+	proofWitness, err := frontend.NewWitness(assignment, field)
+	if err != nil {
+		log.Fatalf("❌ Failed to create witness for proving: %v", err)
+	}
 	startCircuitProve := time.Now()
-	circuitProof, cmVec2, blindingsIn, err := proverWithPK.ProveCircuit(r1csSystem, assignment)
+	circuitProof, err := groth16.Prove(r1csSystem, pk, proofWitness)
 	if err != nil {
 		log.Fatalf("❌ Circuit proof failed: %v", err)
 	}
 	circuitProveTime := time.Since(startCircuitProve).Seconds()
+	cmVec2, blindingsIn := protocol.ExtractGroth16CommitmentsAndBlindings(circuitProof)
 
 	// =========================================================================
 	// 6. Off-line Proof Generation for Merkle & CPLink
 	// =========================================================================
 	fmt.Println("=== Generating Off-line Proofs ===")
-	startOfflineProve := time.Now()
+
+	mpA := make([][]fr.Element, L)
+	mpB := make([][]fr.Element, L)
+	mpC := make([][]fr.Element, L)
+	mpX := make([][]fr.Element, L)
+	mpYZ := make([][]fr.Element, L)
+
+	startMerkleProve := time.Now()
+	for i, idx := range indices {
+		mpA[i] = proverWithPK.GenerateMembershipProof(treeA, idx, depth)
+		mpB[i] = proverWithPK.GenerateMembershipProof(treeB, idx, depth)
+		mpC[i] = proverWithPK.GenerateMembershipProof(treeC, idx, depth)
+		mpX[i] = proverWithPK.GenerateMembershipProof(treeX, idx, depth)
+		mpYZ[i] = proverWithPK.GenerateMembershipProof(treeYZ, idx, depth)
+	}
+	merkleProveTime := time.Since(startMerkleProve).Seconds()
+
+	startCPLinkProve := time.Now()
 
 	columnCommitIndex := -1
 	scalarCommitIndex := -1
@@ -312,20 +342,6 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.M
 
 	if columnCommitIndex < 0 || scalarCommitIndex < 0 {
 		log.Fatalf("❌ Grouped commitment mismatch: expected grouped column len=%d and scalar len=%d", 3*L*K, 2*L)
-	}
-
-	mpA := make([][]fr.Element, L)
-	mpB := make([][]fr.Element, L)
-	mpC := make([][]fr.Element, L)
-	mpX := make([][]fr.Element, L)
-	mpYZ := make([][]fr.Element, L)
-
-	for i, idx := range indices {
-		mpA[i] = proverWithPK.GenerateMembershipProof(treeA, idx, depth)
-		mpB[i] = proverWithPK.GenerateMembershipProof(treeB, idx, depth)
-		mpC[i] = proverWithPK.GenerateMembershipProof(treeC, idx, depth)
-		mpX[i] = proverWithPK.GenerateMembershipProof(treeX, idx, depth)
-		mpYZ[i] = proverWithPK.GenerateMembershipProof(treeYZ, idx, depth)
 	}
 
 	columnBlocks := make([][]fr.Element, 0, 3*L)
@@ -385,14 +401,18 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.M
 	if err != nil {
 		log.Fatalf("❌ Scalar AmComEq proof failed: %v", err)
 	}
-	offlineProveTime := time.Since(startOfflineProve).Seconds()
+	cpLinkProveTime := time.Since(startCPLinkProve).Seconds()
 
 	// =========================================================================
 	// 7. Verify All Proofs
 	// =========================================================================
+	publicWitness, err := proofWitness.Public()
+	if err != nil {
+		log.Fatalf("❌ Failed to create public witness for verification: %v", err)
+	}
+
 	fmt.Println("=== Verifying All Proofs ===")
 	startVerify := time.Now()
-
 	expectedCmABC := crypto.HashElementsMiMC(cmA, cmB, cmC)
 	expectedChallengeR := crypto.HashElements(expectedCmABC)
 	expectedCmXYZ := crypto.HashElementsMiMC(cmX, cmYZ)
@@ -407,14 +427,8 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.M
 		}
 	}
 
-	witness_for_verify, err := frontend.NewWitness(assignment, field)
-	if err != nil {
-		log.Fatalf("❌ Failed to create witness for verification: %v", err)
-	}
-	publicWitness, _ := witness_for_verify.Public()
-
 	startCircuitVerify := time.Now()
-	if err := verifier.VerifyGroth16(circuitProof, publicWitness); err != nil {
+	if err := groth16.Verify(circuitProof, vk, publicWitness); err != nil {
 		log.Fatalf("❌ Groth16 Verify failed: %v", err)
 	}
 	circuitVerifyTime := time.Since(startCircuitVerify).Seconds()
@@ -454,7 +468,7 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.M
 	totalVerifyTime := time.Since(startVerify).Seconds()
 	fmt.Println("✅ ALL BLINDED ZK PROOFS VERIFIED SUCCESSFULLY!")
 
-	totalProveTime := matCommitTime + vecCommitTime + circuitProveTime + offlineProveTime
+	totalProveTime := matCommitTime + vecCommitTime + merkleProveTime + circuitProveTime + cpLinkProveTime
 
 	var buf bytes.Buffer
 	circuitProof.WriteTo(&buf)
@@ -475,12 +489,13 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.M
 		N:                 N,
 		NumQueries:        L,
 		Constraints:       nbConstraints,
-		MatrixComputeTime: MatrixComputeTime,
+		MatrixComputeTime: matrixComputeTime,
 		SetupTime:         setupTime,
 		MatrixCommitTime:  matCommitTime,
 		VectorCommitTime:  vecCommitTime,
+		MerkleProveTime:   merkleProveTime,
 		CircuitProveTime:  circuitProveTime,
-		CPLinkProveTime:   offlineProveTime,
+		CPLinkProveTime:   cpLinkProveTime,
 		TotalProveTime:    totalProveTime,
 		CircuitVerifyTime: circuitVerifyTime,
 		MerkleVerifyTime:  merkleVerifyTime,

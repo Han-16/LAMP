@@ -97,7 +97,10 @@ func runExperiment(logRows, logInner, logCols int, rhoStr string, L int, onlyCom
 
 	fmt.Printf("RectMeow protocol: logRows=%d, logInner=%d, logCols=%d => rows=%d, inner=%d, cols=%d, NIn=%d, NOut=%d, L=%d\n", logRows, logInner, logCols, rows, inner, cols, NIn, NOut, L)
 
+	var setupTime float64
+	startDomainSetup := time.Now()
 	domains := buildRectDomains(inner, NIn, cols, NOut)
+	setupTime += time.Since(startDomainSetup).Seconds()
 
 	if onlyCompile {
 		fmt.Println("Compiling RectMeow circuit for constraints")
@@ -126,6 +129,7 @@ func runExperiment(logRows, logInner, logCols int, rhoStr string, L int, onlyCom
 		}
 	}
 
+	startProtocolSetup := time.Now()
 	ckRows := crypto.SetupCommitKey(rows)
 	ckInner := crypto.SetupCommitKey(inner)
 	ckScalar := crypto.SetupCommitKey(1)
@@ -133,6 +137,7 @@ func runExperiment(logRows, logInner, logCols int, rhoStr string, L int, onlyCom
 	encoderIn := crypto.NewEncoder(inner, NIn)
 	encoderOut := crypto.NewEncoder(cols, NOut)
 	prover := protocol.NewProver(nil, ckRows, encoderIn)
+	setupTime += time.Since(startProtocolSetup).Seconds()
 
 	startCompute := time.Now()
 	matA := matrix.GenerateRandomMatrix(rows, inner)
@@ -204,7 +209,6 @@ func runExperiment(logRows, logInner, logCols int, rhoStr string, L int, onlyCom
 	vecCommitTime := time.Since(startVecCommit).Seconds()
 
 	fmt.Println("Compiling and setting up RectMeow circuit")
-	startSetup := time.Now()
 	emptyCircuit := newRectCircuit(rows, inner, cols, NIn, NOut, depthIn, depthOut, L, domains)
 	r1csSystem, err := frontend.Compile(field, r1cs.NewBuilder, emptyCircuit)
 	if err != nil {
@@ -212,11 +216,12 @@ func runExperiment(logRows, logInner, logCols int, rhoStr string, L int, onlyCom
 	}
 	nbConstraints := r1csSystem.GetNbConstraints()
 
+	startSetup := time.Now()
 	pk, vk, err := groth16.Setup(r1csSystem)
 	if err != nil {
 		log.Fatalf("rectmeow setup failed: %v", err)
 	}
-	setupTime := time.Since(startSetup).Seconds()
+	setupTime += time.Since(startSetup).Seconds()
 
 	assignment := newRectCircuit(rows, inner, cols, NIn, NOut, depthIn, depthOut, L, domains)
 	assignment.Roots = [5]frontend.Variable{cmA, cmB, cmC, cmX, cmYZ}
@@ -257,18 +262,25 @@ func runExperiment(logRows, logInner, logCols int, rhoStr string, L int, onlyCom
 		}
 	}
 
+	startProtocolBindSetup := time.Now()
 	proverWithPK := protocol.NewProver(pk, ckRows, encoderIn)
 	verifier := protocol.NewVerifier(vk, ckRows, proverWithPK.CK2)
+	setupTime += time.Since(startProtocolBindSetup).Seconds()
 
+	proofWitness, err := frontend.NewWitness(assignment, field)
+	if err != nil {
+		log.Fatalf("failed to create rectmeow witness for proving: %v", err)
+	}
 	startCircuitProve := time.Now()
-	circuitProof, cmVec2, blindingsIn, err := proverWithPK.ProveCircuit(r1csSystem, assignment)
+	circuitProof, err := groth16.Prove(r1csSystem, pk, proofWitness)
 	if err != nil {
 		log.Fatalf("rectmeow circuit proof failed: %v", err)
 	}
+	circuitProveTime := time.Since(startCircuitProve).Seconds()
+	cmVec2, blindingsIn := protocol.ExtractGroth16CommitmentsAndBlindings(circuitProof)
 	if len(cmVec2) < 4 || len(blindingsIn) < 4 || len(proverWithPK.CK2) < 4 {
 		log.Fatalf("expected at least 4 Groth16 committed-variable groups, got commitments=%d blindings=%d keys=%d", len(cmVec2), len(blindingsIn), len(proverWithPK.CK2))
 	}
-	circuitProveTime := time.Since(startCircuitProve).Seconds()
 
 	fmt.Println("Generating RectMeow Merkle and CPLink proofs")
 	startOfflineProve := time.Now()
@@ -325,9 +337,13 @@ func runExperiment(logRows, logInner, logCols int, rhoStr string, L int, onlyCom
 	}
 	offlineProveTime := time.Since(startOfflineProve).Seconds()
 
+	publicWitness, err := proofWitness.Public()
+	if err != nil {
+		log.Fatalf("failed to create rectmeow public witness: %v", err)
+	}
+
 	fmt.Println("Verifying RectMeow proofs")
 	startVerify := time.Now()
-
 	expectedCmABC := crypto.HashElementsMiMC(cmA, cmB, cmC)
 	expectedChallengeR := crypto.HashElements(expectedCmABC)
 	expectedCmXYZ := crypto.HashElementsMiMC(cmX, cmYZ)
@@ -341,17 +357,8 @@ func runExperiment(logRows, logInner, logCols int, rhoStr string, L int, onlyCom
 	assertSameIndices("input-domain", indicesIn, expectedIndicesIn)
 	assertSameIndices("output-domain", indicesOut, expectedIndicesOut)
 
-	witnessForVerify, err := frontend.NewWitness(assignment, field)
-	if err != nil {
-		log.Fatalf("failed to create rectmeow witness for verification: %v", err)
-	}
-	publicWitness, err := witnessForVerify.Public()
-	if err != nil {
-		log.Fatalf("failed to create rectmeow public witness: %v", err)
-	}
-
 	startCircuitVerify := time.Now()
-	if err := verifier.VerifyGroth16(circuitProof, publicWitness); err != nil {
+	if err := groth16.Verify(circuitProof, vk, publicWitness); err != nil {
 		log.Fatalf("rectmeow Groth16 verification failed: %v", err)
 	}
 	circuitVerifyTime := time.Since(startCircuitVerify).Seconds()

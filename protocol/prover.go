@@ -90,6 +90,11 @@ func (p *Prover) ProveCircuit(r1cs constraint.ConstraintSystem, assignment front
 		return nil, nil, nil, err
 	}
 
+	cmVec2, blindings := ExtractGroth16CommitmentsAndBlindings(proof)
+	return proof, cmVec2, blindings, nil
+}
+
+func ExtractGroth16CommitmentsAndBlindings(proof groth16.Proof) ([]bn254.G1Affine, []fr.Element) {
 	proofVal := reflect.ValueOf(proof).Elem()
 	commitmentsField := proofVal.FieldByName("Commitments")
 	var cmVec2 []bn254.G1Affine
@@ -98,7 +103,7 @@ func (p *Prover) ProveCircuit(r1cs constraint.ConstraintSystem, assignment front
 	}
 
 	blindings := groth16_bn254.HackBlindings
-	return proof, cmVec2, blindings, nil
+	return cmVec2, blindings
 }
 
 func (p *Prover) EncodeMatrix(matrix [][]fr.Element) ([][]fr.Element, [][]fr.Element, error) {

@@ -10,9 +10,7 @@ import (
 	"github.com/Han-16/meow/benchmark"
 	"github.com/Han-16/meow/circuit"
 	"github.com/Han-16/meow/config"
-	"github.com/Han-16/meow/crypto"
 	"github.com/Han-16/meow/matrix"
-	"github.com/Han-16/meow/protocol"
 
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
@@ -127,12 +125,10 @@ func runExperiment(seqLog int, onlyCompile bool) benchmark.FreivaldsGPT2Result {
 		graph := buildGPT2MediumShapes(seqLen)
 		emptyCircuit := buildCircuit(graph, false)
 
-		startSetup := time.Now()
 		r1csSystem, err := frontend.Compile(field, r1cs.NewBuilder, emptyCircuit)
 		if err != nil {
 			log.Fatalf("Freivalds GPT-2 compilation failed: %v", err)
 		}
-		setupTime := time.Since(startSetup).Seconds()
 		nbConstraints := r1csSystem.GetNbConstraints()
 		fmt.Printf("Freivalds GPT-2 circuit compiled. Constraints: %d\n", nbConstraints)
 
@@ -141,20 +137,18 @@ func runExperiment(seqLog int, onlyCompile bool) benchmark.FreivaldsGPT2Result {
 			SeqLen:      seqLen,
 			NumClaims:   len(graph.claims),
 			Constraints: nbConstraints,
-			SetupTime:   setupTime,
 		}
 	}
 
-	startCompute := time.Now()
-	graph := buildGPT2MediumData(seqLen)
-	matrixComputeTime := time.Since(startCompute).Seconds()
+	graph, matrixComputeTime := buildGPT2MediumData(seqLen)
+	fmt.Printf("   ✅ Matrix Compute Time: %.2f s\n", matrixComputeTime)
 
 	emptyCircuit := buildCircuit(graph, false)
-	startSetup := time.Now()
 	r1csSystem, err := frontend.Compile(field, r1cs.NewBuilder, emptyCircuit)
 	if err != nil {
 		log.Fatalf("Freivalds GPT-2 compilation failed: %v", err)
 	}
+	startSetup := time.Now()
 	pk, vk, err := groth16.Setup(r1csSystem)
 	if err != nil {
 		log.Fatalf("Freivalds GPT-2 setup failed: %v", err)
@@ -163,27 +157,25 @@ func runExperiment(seqLog int, onlyCompile bool) benchmark.FreivaldsGPT2Result {
 	nbConstraints := r1csSystem.GetNbConstraints()
 
 	assignment := buildCircuit(graph, true)
-	prover := protocol.NewProver(pk, crypto.CommitKey{}, nil)
-	verifier := protocol.NewVerifier(vk, crypto.CommitKey{}, nil)
 
+	witness, err := frontend.NewWitness(assignment, field)
+	if err != nil {
+		log.Fatalf("failed to build witness for proving: %v", err)
+	}
 	startProve := time.Now()
-	proof, _, _, err := prover.ProveCircuit(r1csSystem, assignment)
+	proof, err := groth16.Prove(r1csSystem, pk, witness)
 	if err != nil {
 		log.Fatalf("Freivalds GPT-2 proof failed: %v", err)
 	}
 	proveTime := time.Since(startProve).Seconds()
 
-	witness, err := frontend.NewWitness(assignment, field)
-	if err != nil {
-		log.Fatalf("failed to build witness for verification: %v", err)
-	}
 	publicWitness, err := witness.Public()
 	if err != nil {
 		log.Fatalf("failed to build public witness: %v", err)
 	}
 
 	startVerify := time.Now()
-	if err := verifier.VerifyGroth16(proof, publicWitness); err != nil {
+	if err := groth16.Verify(proof, vk, publicWitness); err != nil {
 		log.Fatalf("Freivalds GPT-2 verification failed: %v", err)
 	}
 	verifyTime := time.Since(startVerify).Seconds()
@@ -201,9 +193,10 @@ func runExperiment(seqLog int, onlyCompile bool) benchmark.FreivaldsGPT2Result {
 	}
 }
 
-func buildGPT2MediumData(seqLen int) graphSpec {
+func buildGPT2MediumData(seqLen int) (graphSpec, float64) {
 	nextID := 0
 	graph := graphSpec{}
+	var matrixComputeTime time.Duration
 	newTensor := func(name string, data [][]fr.Element) *tensor {
 		t := &tensor{id: nextID, name: name, rows: len(data), cols: len(data[0]), data: data}
 		nextID++
@@ -213,12 +206,18 @@ func buildGPT2MediumData(seqLen int) graphSpec {
 	addClaim := func(name string, A, B, C *tensor) {
 		graph.claims = append(graph.claims, claimSpec{id: len(graph.claims), name: name, A: A, B: B, C: C})
 	}
+	matMulRect := func(A, B [][]fr.Element, rows, inner, cols int) [][]fr.Element {
+		start := time.Now()
+		out := matrix.MatMulRect(A, B, rows, inner, cols)
+		matrixComputeTime += time.Since(start)
+		return out
+	}
 
 	X := newTensor("X", matrix.GenerateRandomMatrix(seqLen, gpt2D))
 	graph.input = X
 
 	WQKV := newTensor("WQKV", generatePaddedQKVWeights())
-	QKV := newTensor("QKV", matrix.MatMulRect(X.data, WQKV.data, seqLen, gpt2D, gpt2PackedQKVCols))
+	QKV := newTensor("QKV", matMulRect(X.data, WQKV.data, seqLen, gpt2D, gpt2PackedQKVCols))
 	addClaim("qkv_proj", X, WQKV, QKV)
 
 	Ctxs := make([]*tensor, gpt2Heads)
@@ -227,8 +226,8 @@ func buildGPT2MediumData(seqLen int) graphSpec {
 		K := newTensor(fmt.Sprintf("K_%02d", h), sliceColumns(QKV.data, gpt2D+h*gpt2Dh, gpt2Dh))
 		V := newTensor(fmt.Sprintf("V_%02d", h), sliceColumns(QKV.data, 2*gpt2D+h*gpt2Dh, gpt2Dh))
 		KT := newTensor(fmt.Sprintf("KT_%02d", h), matrix.Transpose(K.data, seqLen, gpt2Dh))
-		Score := newTensor(fmt.Sprintf("Score_%02d", h), matrix.MatMulRect(Q.data, KT.data, seqLen, gpt2Dh, seqLen))
-		Ctx := newTensor(fmt.Sprintf("Ctx_%02d", h), matrix.MatMulRect(Score.data, V.data, seqLen, seqLen, gpt2Dh))
+		Score := newTensor(fmt.Sprintf("Score_%02d", h), matMulRect(Q.data, KT.data, seqLen, gpt2Dh, seqLen))
+		Ctx := newTensor(fmt.Sprintf("Ctx_%02d", h), matMulRect(Score.data, V.data, seqLen, seqLen, gpt2Dh))
 		Ctxs[h] = Ctx
 
 		graph.slices = append(graph.slices,
@@ -247,18 +246,18 @@ func buildGPT2MediumData(seqLen int) graphSpec {
 	}
 
 	Wout := newTensor("Wout", matrix.GenerateRandomMatrix(gpt2D, gpt2D))
-	AttnOut := newTensor("AttnOut", matrix.MatMulRect(Context.data, Wout.data, seqLen, gpt2D, gpt2D))
+	AttnOut := newTensor("AttnOut", matMulRect(Context.data, Wout.data, seqLen, gpt2D, gpt2D))
 	Wup := newTensor("Wup", matrix.GenerateRandomMatrix(gpt2D, gpt2M))
-	Hidden := newTensor("Hidden", matrix.MatMulRect(AttnOut.data, Wup.data, seqLen, gpt2D, gpt2M))
+	Hidden := newTensor("Hidden", matMulRect(AttnOut.data, Wup.data, seqLen, gpt2D, gpt2M))
 	Wdown := newTensor("Wdown", matrix.GenerateRandomMatrix(gpt2M, gpt2D))
-	Out := newTensor("Out", matrix.MatMulRect(Hidden.data, Wdown.data, seqLen, gpt2M, gpt2D))
+	Out := newTensor("Out", matMulRect(Hidden.data, Wdown.data, seqLen, gpt2M, gpt2D))
 	graph.output = Out
 
 	addClaim("attn_out", Context, Wout, AttnOut)
 	addClaim("mlp_up", AttnOut, Wup, Hidden)
 	addClaim("mlp_down", Hidden, Wdown, Out)
 
-	return graph
+	return graph, matrixComputeTime.Seconds()
 }
 
 func generatePaddedQKVWeights() [][]fr.Element {
