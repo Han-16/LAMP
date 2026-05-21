@@ -1,3 +1,4 @@
 .DS_Store
 .env
 benchmark/**/*.csv
+benchmark/**/system_info.json

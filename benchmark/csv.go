@@ -21,6 +21,7 @@ func initCSV(filename string, header []string) (*os.File, *csv.Writer) {
 	if err != nil {
 		log.Fatalf("Failed to create CSV file: %v", err)
 	}
+	writeSystemInfoForCSV(filename)
 
 	writer := csv.NewWriter(file)
 	if err := writer.Write(header); err != nil {
