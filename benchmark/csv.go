@@ -4,6 +4,7 @@ import (
 	"encoding/csv"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"strconv"
 )
@@ -146,7 +147,7 @@ type FreivaldsGPT2Result struct {
 // --- Freivalds Benchmark ---
 func InitFreivaldsCSV(filename string) (*os.File, *csv.Writer) {
 	return initCSV(filename, []string{
-		"log(K)", "Constraint", "MatrixComputeTime (s)", "Setup (s)", "Prove (s)", "Verify (s)",
+		"log(K)", "Constraint", "MatrixComputeTime (s/ms)", "Setup (s/ms)", "Prove (s/ms)", "Verify (s/ms)",
 	})
 }
 
@@ -165,10 +166,10 @@ func AppendFreivaldsResultToCSV(writer *csv.Writer, res FreivaldsResult) {
 func InitMeowCSV(filename string) (*os.File, *csv.Writer) {
 	return initCSV(filename, []string{
 		"LogK", "Rho", "N", "NumQueries", "Constraints",
-		"MatrixComputeTime(s)", "SetupTime(s)",
-		"MatrixCommitTime(s)", "VectorCommitTime(s)", "MerkleProveTime(s)", "CircuitProveTime(s)",
-		"CPLinkProveTime(s)", "TotalProveTime(s)",
-		"CircuitVerifyTime(s)", "MerkleVerifyTime(s)", "CPLinkVerifyTime(s)", "TotalVerifyTime(s)",
+		"MatrixComputeTime(s/ms)", "SetupTime(s/ms)",
+		"MatrixCommitTime(s/ms)", "VectorCommitTime(s/ms)", "MerkleProveTime(s/ms)", "CircuitProveTime(s/ms)",
+		"CPLinkProveTime(s/ms)", "TotalProveTime(s/ms)",
+		"CircuitVerifyTime(s/ms)", "MerkleVerifyTime(s/ms)", "CPLinkVerifyTime(s/ms)", "TotalVerifyTime(s/ms)",
 		"MerkleProofSize(B)", "Groth16ProofSize(B)", "CPLinkProofSize(B)", "TotalProofSize(B)",
 	})
 }
@@ -203,10 +204,10 @@ func AppendMeowResultToCSV(writer *csv.Writer, res MeowResult) {
 func InitRectMeowCSV(filename string) (*os.File, *csv.Writer) {
 	return initCSV(filename, []string{
 		"LogRows", "LogInner", "LogCols", "Rows", "Inner", "Cols", "Rho", "NIn", "NOut", "NumQueries", "Constraints",
-		"MatrixComputeTime(s)", "SetupTime(s)",
-		"MatrixCommitTime(s)", "VectorCommitTime(s)", "CircuitProveTime(s)",
-		"CPLinkProveTime(s)", "TotalProveTime(s)",
-		"CircuitVerifyTime(s)", "MerkleVerifyTime(s)", "CPLinkVerifyTime(s)", "TotalVerifyTime(s)",
+		"MatrixComputeTime(s/ms)", "SetupTime(s/ms)",
+		"MatrixCommitTime(s/ms)", "VectorCommitTime(s/ms)", "CircuitProveTime(s/ms)",
+		"CPLinkProveTime(s/ms)", "TotalProveTime(s/ms)",
+		"CircuitVerifyTime(s/ms)", "MerkleVerifyTime(s/ms)", "CPLinkVerifyTime(s/ms)", "TotalVerifyTime(s/ms)",
 		"MerkleProofSize(B)", "Groth16ProofSize(B)", "CPLinkProofSize(B)", "TotalProofSize(B)",
 	})
 }
@@ -246,9 +247,9 @@ func AppendRectMeowResultToCSV(writer *csv.Writer, res RectMeowResult) {
 func InitMeowGPT2CSV(filename string) (*os.File, *csv.Writer) {
 	return initCSV(filename, []string{
 		"SeqLog", "SeqLen", "Rho", "NumQueries", "NumClaims", "NumCommitGroups", "Constraints",
-		"MatrixComputeTime(s)", "SetupTime(s)", "CommitTime(s)", "MerkleProveTime(s)", "CircuitProveTime(s)",
-		"CPLinkProveTime(s)", "TotalProveTime(s)",
-		"CircuitVerifyTime(s)", "MerkleVerifyTime(s)", "CPLinkVerifyTime(s)", "TotalVerifyTime(s)",
+		"MatrixComputeTime(s/ms)", "SetupTime(s/ms)", "CommitTime(s/ms)", "MerkleProveTime(s/ms)", "CircuitProveTime(s/ms)",
+		"CPLinkProveTime(s/ms)", "TotalProveTime(s/ms)",
+		"CircuitVerifyTime(s/ms)", "MerkleVerifyTime(s/ms)", "CPLinkVerifyTime(s/ms)", "TotalVerifyTime(s/ms)",
 		"MerkleProofSize(B)", "Groth16ProofSize(B)", "CPLinkProofSize(B)", "TotalProofSize(B)",
 	})
 }
@@ -284,7 +285,7 @@ func AppendMeowGPT2ResultToCSV(writer *csv.Writer, res MeowGPT2Result) {
 func InitFreivaldsGPT2CSV(filename string) (*os.File, *csv.Writer) {
 	return initCSV(filename, []string{
 		"SeqLog", "SeqLen", "NumClaims", "Constraints",
-		"MatrixComputeTime(s)", "SetupTime(s)", "ProveTime(s)", "VerifyTime(s)",
+		"MatrixComputeTime(s/ms)", "SetupTime(s/ms)", "ProveTime(s/ms)", "VerifyTime(s/ms)",
 	})
 }
 
@@ -303,5 +304,12 @@ func AppendFreivaldsGPT2ResultToCSV(writer *csv.Writer, res FreivaldsGPT2Result)
 }
 
 func formatSeconds(seconds float64) string {
-	return fmt.Sprintf("%.2f", seconds)
+	return FormatDurationSeconds(seconds)
+}
+
+func FormatDurationSeconds(seconds float64) string {
+	if math.Abs(seconds) < 0.005 {
+		return fmt.Sprintf("%dms", int(math.Round(seconds*1000)))
+	}
+	return fmt.Sprintf("%.2fs", seconds)
 }

@@ -295,6 +295,7 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.M
 	verifier := protocol.NewVerifier(vk, ck1, proverWithPK.CK2)
 	setupTime += time.Since(startProtocolBindSetup).Seconds()
 
+	fmt.Println("=== 3. Generating Proof ===")
 	proofWitness, err := frontend.NewWitness(assignment, field)
 	if err != nil {
 		log.Fatalf("❌ Failed to create witness for proving: %v", err)
@@ -305,6 +306,7 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.M
 		log.Fatalf("❌ Circuit proof failed: %v", err)
 	}
 	circuitProveTime := time.Since(startCircuitProve).Seconds()
+	fmt.Printf("   ✅ Prove Time: %s\n", benchmark.FormatDurationSeconds(circuitProveTime))
 	cmVec2, blindingsIn := protocol.ExtractGroth16CommitmentsAndBlindings(circuitProof)
 
 	// =========================================================================
@@ -466,6 +468,7 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.M
 	cpLinkVerifyTime += time.Since(startCpLink).Seconds()
 
 	totalVerifyTime := time.Since(startVerify).Seconds()
+	fmt.Printf("   ✅ Verify Time: %s\n", benchmark.FormatDurationSeconds(totalVerifyTime))
 	fmt.Println("✅ ALL BLINDED ZK PROOFS VERIFIED SUCCESSFULLY!")
 
 	totalProveTime := matCommitTime + vecCommitTime + merkleProveTime + circuitProveTime + cpLinkProveTime

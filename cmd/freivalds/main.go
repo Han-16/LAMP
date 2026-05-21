@@ -147,7 +147,7 @@ func runExperiment(logK int, onlyCompile bool) benchmark.FreivaldsResult {
 		log.Fatalf("❌ Proof generation failed: %v", err)
 	}
 	proveTime := time.Since(startProve).Seconds()
-	fmt.Printf("   ✅ Prove Time: %.2f s\n", proveTime)
+	fmt.Printf("   ✅ Prove Time: %s\n", benchmark.FormatDurationSeconds(proveTime))
 
 	// =========================================================================
 	// 4. Verification
@@ -166,7 +166,7 @@ func runExperiment(logK int, onlyCompile bool) benchmark.FreivaldsResult {
 		log.Fatalf("❌ Verification FAILED: %v", err)
 	}
 	verifyTime := time.Since(startVerify).Seconds()
-	fmt.Printf("   ✅ Verify Time: %.2f s\n", verifyTime)
+	fmt.Printf("   ✅ Verify Time: %s\n", benchmark.FormatDurationSeconds(verifyTime))
 
 	return benchmark.FreivaldsResult{
 		LogK:              logK,
