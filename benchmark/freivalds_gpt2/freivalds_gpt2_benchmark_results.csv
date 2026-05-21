@@ -1,0 +1,2 @@
+SeqLog,SeqLen,NumClaims,Constraints,MatrixComputeTime(s),SetupTime(s),ProveTime(s),VerifyTime(s)
+10,1024,36,76807671,20.86,3977.53,413.61,0.51

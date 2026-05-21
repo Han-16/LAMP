@@ -1,0 +1,2 @@
+SeqLog,SeqLen,Rho,NumQueries,NumClaims,NumCommitGroups,Constraints,MatrixComputeTime(s),SetupTime(s),CommitTime(s),MerkleProveTime(s),CircuitProveTime(s),CPLinkProveTime(s),TotalProveTime(s),CircuitVerifyTime(s),MerkleVerifyTime(s),CPLinkVerifyTime(s),TotalVerifyTime(s),MerkleProofSize(B),Groth16ProofSize(B),CPLinkProofSize(B),TotalProofSize(B)
+10,1024,1/2,128,36,5,33351486,20.85,2002.80,69.18,0.01,158.79,28.39,256.36,0.47,0.38,26.72,27.56,15077408,356,550418432,565496196
