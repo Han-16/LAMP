@@ -331,7 +331,7 @@ func formatSeconds(seconds float64) string {
 }
 
 func FormatDurationSeconds(seconds float64) string {
-	if math.Abs(seconds) < 0.005 {
+	if math.Abs(seconds) < 1 {
 		return fmt.Sprintf("%dms", int(math.Round(seconds*1000)))
 	}
 	return fmt.Sprintf("%.2fs", seconds)
