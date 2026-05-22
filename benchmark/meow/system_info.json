@@ -1,0 +1,11 @@
+{
+  "generatedAt": "2026-05-22T03:35:37Z",
+  "hostname": "a07f5a4c23b3",
+  "os": "linux",
+  "arch": "amd64",
+  "goVersion": "go1.25.6",
+  "cpuModel": "AMD EPYC 7B13",
+  "logicalCores": 32,
+  "totalMemoryBytes": 270249459712,
+  "totalMemory": "251.69 GiB"
+}
