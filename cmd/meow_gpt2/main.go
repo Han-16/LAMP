@@ -38,6 +38,11 @@ const (
 )
 
 const (
+	linkerSigma  = "sigma"
+	linkerQANIZK = "qa_nizk"
+)
+
+const (
 	groupS = iota
 	groupD
 	groupDh
@@ -171,6 +176,7 @@ func main() {
 	seqFlag := flag.Int("seq", config.GetInt("MEOW_GPT2_SEQ", 1), "Log2 sequence length")
 	rhoFlag := flag.String("rho", config.GetString("MEOW_GPT2_RHO", "1/2"), "Code rate, 1/2 or 1/4")
 	LFlag := flag.Int("L", config.GetInt("MEOW_GPT2_L", 1), "Number of sampled queries per matmul and wiring check")
+	linkerFlag := flag.String("linker", config.GetString("MEOW_GPT2_LINKER", linkerSigma), "CP-link backend: sigma or qa_nizk")
 	allFlag := flag.Bool("all", config.GetBool("MEOW_GPT2_ALL", false), "Run benchmark range")
 	rangeFlag := flag.Bool("range", false, "Alias for -all")
 	fromFlag := flag.Int("from", config.GetInt("MEOW_GPT2_SEQ_FROM", 0), "First log2 sequence length when range mode is enabled")
@@ -190,25 +196,26 @@ func main() {
 		if *fromFlag > *toFlag {
 			log.Fatalf("invalid seq range: from=%d, to=%d", *fromFlag, *toFlag)
 		}
-		fmt.Printf("Running Meow GPT-2 range: seq=%d..%d, rho=%s, L=%d\n", *fromFlag, *toFlag, *rhoFlag, *LFlag)
+		fmt.Printf("Running Meow GPT-2 range: seq=%d..%d, rho=%s, L=%d, linker=%s\n", *fromFlag, *toFlag, *rhoFlag, *LFlag, normalizeLinker(*linkerFlag))
 		for seqLog := *fromFlag; seqLog <= *toFlag; seqLog++ {
-			res := runExperiment(seqLog, *rhoFlag, *LFlag, *compileFlag)
+			res := runExperiment(seqLog, *rhoFlag, *LFlag, *linkerFlag, *compileFlag)
 			benchmark.AppendMeowGPT2ResultToCSV(writer, res)
 			fmt.Println("----------------------------------------------------------------")
 		}
 		return
 	}
 
-	res := runExperiment(*seqFlag, *rhoFlag, *LFlag, *compileFlag)
+	res := runExperiment(*seqFlag, *rhoFlag, *LFlag, *linkerFlag, *compileFlag)
 	benchmark.AppendMeowGPT2ResultToCSV(writer, res)
 }
 
-func runExperiment(seqLog int, rho string, L int, onlyCompile bool) benchmark.MeowGPT2Result {
+func runExperiment(seqLog int, rho string, L int, linker string, onlyCompile bool) benchmark.MeowGPT2Result {
+	linker = normalizeLinker(linker)
 	if seqLog < 0 || L <= 0 {
 		log.Fatalf("invalid parameters: seq=%d L=%d", seqLog, L)
 	}
 	seqLen := 1 << seqLog
-	fmt.Printf("Meow GPT-2 medium packed-QKV layer: seq=2^%d=%d, rho=%s, L=%d\n", seqLog, seqLen, rho, L)
+	fmt.Printf("Meow GPT-2 medium packed-QKV layer: seq=2^%d=%d, rho=%s, L=%d, linker=%s\n", seqLog, seqLen, rho, L, linker)
 
 	var prep *preparedLayer
 	if onlyCompile {
@@ -232,12 +239,14 @@ func runExperiment(seqLog int, rho string, L int, onlyCompile bool) benchmark.Me
 			SeqLog:            seqLog,
 			SeqLen:            seqLen,
 			Rho:               rho,
+			Linker:            linker,
 			NumQueries:        L,
 			NumClaims:         len(prep.claims),
 			NumCommitGroups:   numGroups,
 			Constraints:       nbConstraints,
 			MatrixComputeTime: prep.matrixComputeTime,
 			SetupTime:         prep.setupTime,
+			ProtocolSetupTime: prep.setupTime,
 			CommitTime:        prep.commitTime,
 			MerkleProveTime:   prep.merkleProveTime,
 		}
@@ -248,13 +257,35 @@ func runExperiment(seqLog int, rho string, L int, onlyCompile bool) benchmark.Me
 	if err != nil {
 		log.Fatalf("Meow GPT-2 setup failed: %v", err)
 	}
-	setupTime := prep.setupTime + time.Since(startSetup).Seconds()
+	circuitSetupTime := time.Since(startSetup).Seconds()
+	protocolSetupTime := prep.setupTime
 
 	assignment := buildCircuit(prep, true)
 	startProtocolBindSetup := time.Now()
 	prover := protocol.NewProver(pk, prep.extGroups[groupS].ck, nil)
 	verifier := protocol.NewVerifier(vk, prep.extGroups[groupS].ck, prover.CK2)
-	setupTime += time.Since(startProtocolBindSetup).Seconds()
+	protocolSetupTime += time.Since(startProtocolBindSetup).Seconds()
+	if len(prover.CK2) < numGroups {
+		log.Fatalf("expected at least %d committed groups, got keys=%d", numGroups, len(prover.CK2))
+	}
+
+	cpLinkSetupTime := 0.0
+	qaProvingKeys := make([]crypto.QALinkProvingKey, numGroups)
+	qaVerifyingKeys := make([]crypto.QALinkVerifyingKey, numGroups)
+	if linker == linkerQANIZK {
+		startCPLinkSetup := time.Now()
+		for groupID := 0; groupID < numGroups; groupID++ {
+			blocks, _, _ := prep.sampleCPLinkData(groupID)
+			qaPK, qaVK, err := crypto.SetupQALink(len(blocks), prep.extGroups[groupID].blockLen, prover.CK2[groupID], prep.extGroups[groupID].ck)
+			if err != nil {
+				log.Fatalf("group %d QA-NIZK setup failed: %v", groupID, err)
+			}
+			qaProvingKeys[groupID] = qaPK
+			qaVerifyingKeys[groupID] = qaVK
+		}
+		cpLinkSetupTime = time.Since(startCPLinkSetup).Seconds()
+	}
+	setupTime := protocolSetupTime + circuitSetupTime + cpLinkSetupTime
 
 	proofWitness, err := frontend.NewWitness(assignment, field)
 	if err != nil {
@@ -272,14 +303,29 @@ func runExperiment(seqLog int, rho string, L int, onlyCompile bool) benchmark.Me
 	}
 
 	startOffline := time.Now()
-	linkProofs := make([]crypto.AmComEqProof, numGroups)
-	for groupID := 0; groupID < numGroups; groupID++ {
-		blocks, commits, blindings := prep.sampleCPLinkData(groupID)
-		linkProof, err := crypto.ProveAmComEq(blocks, blindingsIn[groupID], blindings, prover.CK2[groupID], prep.extGroups[groupID].ck, cmVec2[groupID], commits)
-		if err != nil {
-			log.Fatalf("group %d CPLink proof failed: %v", groupID, err)
+	sigmaLinkProofs := make([]crypto.AmComEqProof, numGroups)
+	qaLinkProofs := make([]crypto.QALinkProof, numGroups)
+	switch linker {
+	case linkerSigma:
+		for groupID := 0; groupID < numGroups; groupID++ {
+			blocks, commits, blindings := prep.sampleCPLinkData(groupID)
+			linkProof, err := crypto.ProveAmComEq(blocks, blindingsIn[groupID], blindings, prover.CK2[groupID], prep.extGroups[groupID].ck, cmVec2[groupID], commits)
+			if err != nil {
+				log.Fatalf("group %d CPLink proof failed: %v", groupID, err)
+			}
+			sigmaLinkProofs[groupID] = linkProof
 		}
-		linkProofs[groupID] = linkProof
+	case linkerQANIZK:
+		for groupID := 0; groupID < numGroups; groupID++ {
+			blocks, _, blindings := prep.sampleCPLinkData(groupID)
+			linkProof, err := crypto.ProveQALink(blocks, blindingsIn[groupID], blindings, qaProvingKeys[groupID])
+			if err != nil {
+				log.Fatalf("group %d QA-NIZK link proof failed: %v", groupID, err)
+			}
+			qaLinkProofs[groupID] = linkProof
+		}
+	default:
+		log.Fatalf("unsupported linker %q", linker)
 	}
 	cpLinkProveTime := time.Since(startOffline).Seconds()
 
@@ -304,12 +350,23 @@ func runExperiment(seqLog int, rho string, L int, onlyCompile bool) benchmark.Me
 	merkleVerifyTime := time.Since(startMerkle).Seconds()
 
 	startCPLink := time.Now()
-	for groupID := 0; groupID < numGroups; groupID++ {
-		blocks, commits, _ := prep.sampleCPLinkData(groupID)
-		_ = blocks
-		if !crypto.VerifyAmComEq(cmVec2[groupID], commits, linkProofs[groupID], verifier.CK2[groupID], prep.extGroups[groupID].ck) {
-			log.Fatalf("group %d CPLink verification failed", groupID)
+	switch linker {
+	case linkerSigma:
+		for groupID := 0; groupID < numGroups; groupID++ {
+			_, commits, _ := prep.sampleCPLinkData(groupID)
+			if !crypto.VerifyAmComEq(cmVec2[groupID], commits, sigmaLinkProofs[groupID], verifier.CK2[groupID], prep.extGroups[groupID].ck) {
+				log.Fatalf("group %d CPLink verification failed", groupID)
+			}
 		}
+	case linkerQANIZK:
+		for groupID := 0; groupID < numGroups; groupID++ {
+			_, commits, _ := prep.sampleCPLinkData(groupID)
+			if !crypto.VerifyQALink(cmVec2[groupID], commits, qaLinkProofs[groupID], qaVerifyingKeys[groupID]) {
+				log.Fatalf("group %d QA-NIZK link verification failed", groupID)
+			}
+		}
+	default:
+		log.Fatalf("unsupported linker %q", linker)
 	}
 	cpLinkVerifyTime := time.Since(startCPLink).Seconds()
 	totalVerifyTime := time.Since(startVerify).Seconds()
@@ -319,8 +376,15 @@ func runExperiment(seqLog int, rho string, L int, onlyCompile bool) benchmark.Me
 	groth16ProofSize := buf.Len()
 	merkleProofSize := prep.merkleProofSize()
 	cpLinkProofSize := 0
-	for i := range linkProofs {
-		cpLinkProofSize += crypto.AmComEqProofSizeBytes(linkProofs[i])
+	switch linker {
+	case linkerSigma:
+		for i := range sigmaLinkProofs {
+			cpLinkProofSize += crypto.AmComEqProofSizeBytes(sigmaLinkProofs[i])
+		}
+	case linkerQANIZK:
+		for i := range qaLinkProofs {
+			cpLinkProofSize += crypto.QALinkProofSizeBytes(qaLinkProofs[i])
+		}
 	}
 	totalProofSize := groth16ProofSize + merkleProofSize + cpLinkProofSize
 	totalProveTime := prep.commitTime + prep.merkleProveTime + circuitProveTime + cpLinkProveTime
@@ -332,12 +396,16 @@ func runExperiment(seqLog int, rho string, L int, onlyCompile bool) benchmark.Me
 		SeqLog:            seqLog,
 		SeqLen:            seqLen,
 		Rho:               rho,
+		Linker:            linker,
 		NumQueries:        L,
 		NumClaims:         len(prep.claims),
 		NumCommitGroups:   numGroups,
 		Constraints:       nbConstraints,
 		MatrixComputeTime: prep.matrixComputeTime,
 		SetupTime:         setupTime,
+		ProtocolSetupTime: protocolSetupTime,
+		CircuitSetupTime:  circuitSetupTime,
+		CPLinkSetupTime:   cpLinkSetupTime,
 		CommitTime:        prep.commitTime,
 		MerkleProveTime:   prep.merkleProveTime,
 		CircuitProveTime:  circuitProveTime,
@@ -1261,4 +1329,16 @@ func (p *preparedLayer) merkleProofSize() int {
 	}
 	size += len(p.scalarProofs) * p.extGroups[groupScalar].depth * 32
 	return size
+}
+
+func normalizeLinker(linker string) string {
+	switch strings.ToLower(strings.TrimSpace(linker)) {
+	case "", linkerSigma:
+		return linkerSigma
+	case linkerQANIZK, "qa", "qanizk":
+		return linkerQANIZK
+	default:
+		log.Fatalf("unsupported linker %q; use %q or %q", linker, linkerSigma, linkerQANIZK)
+	}
+	return linkerSigma
 }

@@ -16,7 +16,8 @@ usage() {
 	echo "usage: sh scripts/run_gpt2_bench.sh [meow|freivalds|meow_gpt2|freivalds_gpt2|all] [--range] [flags...]" >&2
 	echo "" >&2
 	echo "examples:" >&2
-	echo "  sh scripts/run_gpt2_bench.sh meow --seq 1 --rho 1/2 --L 1 --compile" >&2
+	echo "  sh scripts/run_gpt2_bench.sh meow --seq 1 --rho 1/2 --L 1 --linker sigma --compile" >&2
+	echo "  sh scripts/run_gpt2_bench.sh meow --seq 1 --rho 1/2 --L 1 --linker qa_nizk" >&2
 	echo "  sh scripts/run_gpt2_bench.sh freivalds --seq 1 --compile" >&2
 	echo "  sh scripts/run_gpt2_bench.sh all --range --from 0 --to 4 --compile" >&2
 	exit 2
@@ -50,7 +51,7 @@ docker build -t "$image" .
 
 env_args="--env-file .env"
 for key in \
-	MEOW_GPT2_SEQ MEOW_GPT2_RHO MEOW_GPT2_L MEOW_GPT2_ALL MEOW_GPT2_SEQ_FROM MEOW_GPT2_SEQ_TO MEOW_GPT2_ONLY_COMPILE MEOW_GPT2_OUTPUT_DIR \
+	MEOW_GPT2_SEQ MEOW_GPT2_RHO MEOW_GPT2_L MEOW_GPT2_LINKER MEOW_GPT2_ALL MEOW_GPT2_SEQ_FROM MEOW_GPT2_SEQ_TO MEOW_GPT2_ONLY_COMPILE MEOW_GPT2_OUTPUT_DIR \
 	FREIVALDS_GPT2_SEQ FREIVALDS_GPT2_ALL FREIVALDS_GPT2_SEQ_FROM FREIVALDS_GPT2_SEQ_TO FREIVALDS_GPT2_ONLY_COMPILE FREIVALDS_GPT2_OUTPUT_DIR
 do
 	value="$(eval "printf '%s' \"\${$key:-}\"")"

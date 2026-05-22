@@ -26,6 +26,11 @@ import (
 	"github.com/consensys/gnark/frontend/cs/r1cs"
 )
 
+const (
+	linkerSigma  = "sigma"
+	linkerQANIZK = "qa_nizk"
+)
+
 func main() {
 	if err := config.LoadDotEnv(); err != nil {
 		log.Fatalf("failed to load .env: %v", err)
@@ -34,6 +39,7 @@ func main() {
 	logKFlag := flag.Int("K", config.GetInt("MEOW_LOG_K", 10), "Log base 2 of K")
 	rhoFlag := flag.String("rho", config.GetString("MEOW_RHO", "1/2"), "Code rate")
 	LFlag := flag.Int("L", config.GetInt("MEOW_L", 128), "Number of unique indices L")
+	linkerFlag := flag.String("linker", config.GetString("MEOW_LINKER", linkerSigma), "CP-link backend: sigma or qa_nizk")
 	allFlag := flag.Bool("all", config.GetBool("MEOW_ALL", false), "Run benchmark range")
 	fromFlag := flag.Int("from", config.GetInt("MEOW_LOG_K_FROM", 7), "First logK when -all is enabled")
 	toFlag := flag.Int("to", config.GetInt("MEOW_LOG_K_TO", 20), "Last logK when -all is enabled")
@@ -61,17 +67,18 @@ func main() {
 		}
 
 		for logK := *fromFlag; logK <= *toFlag; logK++ {
-			res := runExperiment(logK, *rhoFlag, *LFlag, onlyCompile)
+			res := runExperiment(logK, *rhoFlag, *LFlag, *linkerFlag, onlyCompile)
 			benchmark.AppendMeowResultToCSV(writer, res)
 		}
 	} else {
-		res := runExperiment(*logKFlag, *rhoFlag, *LFlag, onlyCompile)
+		res := runExperiment(*logKFlag, *rhoFlag, *LFlag, *linkerFlag, onlyCompile)
 		benchmark.AppendMeowResultToCSV(writer, res)
 	}
 	fmt.Println("🎉 All Meow ZK tasks finished!")
 }
 
-func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.MeowResult {
+func runExperiment(logK int, rhoStr string, L int, linker string, onlyCompile bool) benchmark.MeowResult {
+	linker = normalizeLinker(linker)
 	K := 1 << logK
 	N := K << 1
 	if rhoStr == "1/4" {
@@ -80,7 +87,7 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.M
 	depth := int(math.Log2(float64(N)))
 	field := ecc.BN254.ScalarField()
 
-	fmt.Printf("🔥 [Meow ZK Protocol] logK=%d, K=%d, N=%d, L=%d\n", logK, K, N, L)
+	fmt.Printf("🔥 [Meow ZK Protocol] logK=%d, K=%d, N=%d, L=%d, linker=%s\n", logK, K, N, L, linker)
 
 	if onlyCompile {
 		fmt.Println("=== 🔍 Compiling Circuit for Constraints ===")
@@ -120,6 +127,7 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.M
 		return benchmark.MeowResult{
 			LogK:        logK,
 			Rho:         rhoStr,
+			Linker:      linker,
 			N:           N,
 			NumQueries:  L,
 			Constraints: nbConstraints,
@@ -129,13 +137,15 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.M
 	// =========================================================================
 	// 0. Setup Phase
 	// =========================================================================
-	var setupTime float64
+	var protocolSetupTime float64
+	var circuitSetupTime float64
+	var cpLinkSetupTime float64
 	startProtocolSetup := time.Now()
 	ck1 := crypto.SetupCommitKey(K)
 	ckScalar := crypto.SetupCommitKey(1)
 	encoder := crypto.NewEncoder(K, N)
 	prover := protocol.NewProver(nil, ck1, encoder)
-	setupTime += time.Since(startProtocolSetup).Seconds()
+	protocolSetupTime += time.Since(startProtocolSetup).Seconds()
 
 	// =========================================================================
 	// 1. Compute Matrices A, B, C
@@ -225,7 +235,7 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.M
 	domainK := fft.NewDomain(uint64(K))
 	rootsK := crypto.GetDomainRoots(domainK, K)
 	weightsK := crypto.PrecomputeBarycentricWeights(rootsK)
-	setupTime += time.Since(startDomainSetup).Seconds()
+	protocolSetupTime += time.Since(startDomainSetup).Seconds()
 
 	emptyCircuit := &circuit.MeowCircuit{
 		K: K, N: N, Depth: depth,
@@ -248,7 +258,7 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.M
 
 	startSetup := time.Now()
 	pk, vk, _ := groth16.Setup(r1csSystem)
-	setupTime += time.Since(startSetup).Seconds()
+	circuitSetupTime += time.Since(startSetup).Seconds()
 
 	// =========================================================================
 	// 5. Generate Proof
@@ -293,7 +303,40 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.M
 	startProtocolBindSetup := time.Now()
 	proverWithPK := protocol.NewProver(pk, ck1, encoder)
 	verifier := protocol.NewVerifier(vk, ck1, proverWithPK.CK2)
-	setupTime += time.Since(startProtocolBindSetup).Seconds()
+	protocolSetupTime += time.Since(startProtocolBindSetup).Seconds()
+
+	columnCommitIndex := -1
+	scalarCommitIndex := -1
+	for i, ck := range proverWithPK.CK2 {
+		if len(ck.G) == 3*L*K {
+			columnCommitIndex = i
+		} else if len(ck.G) == 2*L {
+			scalarCommitIndex = i
+		}
+	}
+
+	if columnCommitIndex < 0 || scalarCommitIndex < 0 {
+		log.Fatalf("❌ Grouped commitment mismatch: expected grouped column len=%d and scalar len=%d", 3*L*K, 2*L)
+	}
+
+	var columnQAPK crypto.QALinkProvingKey
+	var columnQAVK crypto.QALinkVerifyingKey
+	var scalarQAPK crypto.QALinkProvingKey
+	var scalarQAVK crypto.QALinkVerifyingKey
+	if linker == linkerQANIZK {
+		startCPLinkSetup := time.Now()
+		var err error
+		columnQAPK, columnQAVK, err = crypto.SetupQALink(3*L, K, proverWithPK.CK2[columnCommitIndex], ck1)
+		if err != nil {
+			log.Fatalf("❌ Column QA-NIZK setup failed: %v", err)
+		}
+		scalarQAPK, scalarQAVK, err = crypto.SetupQALink(2*L, 1, proverWithPK.CK2[scalarCommitIndex], ckScalar)
+		if err != nil {
+			log.Fatalf("❌ Scalar QA-NIZK setup failed: %v", err)
+		}
+		cpLinkSetupTime += time.Since(startCPLinkSetup).Seconds()
+	}
+	setupTime := protocolSetupTime + circuitSetupTime + cpLinkSetupTime
 
 	fmt.Println("=== 3. Generating Proof ===")
 	proofWitness, err := frontend.NewWitness(assignment, field)
@@ -332,20 +375,6 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.M
 
 	startCPLinkProve := time.Now()
 
-	columnCommitIndex := -1
-	scalarCommitIndex := -1
-	for i, ck := range proverWithPK.CK2 {
-		if len(ck.G) == 3*L*K {
-			columnCommitIndex = i
-		} else if len(ck.G) == 2*L {
-			scalarCommitIndex = i
-		}
-	}
-
-	if columnCommitIndex < 0 || scalarCommitIndex < 0 {
-		log.Fatalf("❌ Grouped commitment mismatch: expected grouped column len=%d and scalar len=%d", 3*L*K, 2*L)
-	}
-
 	columnBlocks := make([][]fr.Element, 0, 3*L)
 	columnExternalCommitments := make([]bn254.G1Affine, 0, 3*L)
 	columnExternalBlindings := make([]fr.Element, 0, 3*L)
@@ -379,29 +408,57 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.M
 		scalarExternalBlindings = append(scalarExternalBlindings, blYZ[idx])
 	}
 
-	columnLinkProof, err := crypto.ProveAmComEq(
-		columnBlocks,
-		blindingsIn[columnCommitIndex],
-		columnExternalBlindings,
-		proverWithPK.CK2[columnCommitIndex],
-		ck1,
-		cmVec2[columnCommitIndex],
-		columnExternalCommitments,
-	)
-	if err != nil {
-		log.Fatalf("❌ Column AmComEq proof failed: %v", err)
-	}
-	scalarLinkProof, err := crypto.ProveAmComEq(
-		scalarBlocks,
-		blindingsIn[scalarCommitIndex],
-		scalarExternalBlindings,
-		proverWithPK.CK2[scalarCommitIndex],
-		ckScalar,
-		cmVec2[scalarCommitIndex],
-		scalarExternalCommitments,
-	)
-	if err != nil {
-		log.Fatalf("❌ Scalar AmComEq proof failed: %v", err)
+	var columnSigmaProof crypto.AmComEqProof
+	var scalarSigmaProof crypto.AmComEqProof
+	var columnQAProof crypto.QALinkProof
+	var scalarQAProof crypto.QALinkProof
+	switch linker {
+	case linkerSigma:
+		columnSigmaProof, err = crypto.ProveAmComEq(
+			columnBlocks,
+			blindingsIn[columnCommitIndex],
+			columnExternalBlindings,
+			proverWithPK.CK2[columnCommitIndex],
+			ck1,
+			cmVec2[columnCommitIndex],
+			columnExternalCommitments,
+		)
+		if err != nil {
+			log.Fatalf("❌ Column AmComEq proof failed: %v", err)
+		}
+		scalarSigmaProof, err = crypto.ProveAmComEq(
+			scalarBlocks,
+			blindingsIn[scalarCommitIndex],
+			scalarExternalBlindings,
+			proverWithPK.CK2[scalarCommitIndex],
+			ckScalar,
+			cmVec2[scalarCommitIndex],
+			scalarExternalCommitments,
+		)
+		if err != nil {
+			log.Fatalf("❌ Scalar AmComEq proof failed: %v", err)
+		}
+	case linkerQANIZK:
+		columnQAProof, err = crypto.ProveQALink(
+			columnBlocks,
+			blindingsIn[columnCommitIndex],
+			columnExternalBlindings,
+			columnQAPK,
+		)
+		if err != nil {
+			log.Fatalf("❌ Column QA-NIZK proof failed: %v", err)
+		}
+		scalarQAProof, err = crypto.ProveQALink(
+			scalarBlocks,
+			blindingsIn[scalarCommitIndex],
+			scalarExternalBlindings,
+			scalarQAPK,
+		)
+		if err != nil {
+			log.Fatalf("❌ Scalar QA-NIZK proof failed: %v", err)
+		}
+	default:
+		log.Fatalf("unsupported linker %q", linker)
 	}
 	cpLinkProveTime := time.Since(startCPLinkProve).Seconds()
 
@@ -459,11 +516,23 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.M
 	}
 
 	startCpLink := time.Now()
-	if !crypto.VerifyAmComEq(cmVec2[columnCommitIndex], columnExternalCommitments, columnLinkProof, verifier.CK2[columnCommitIndex], ck1) {
-		log.Fatal("❌ Column AmComEq Failed")
-	}
-	if !crypto.VerifyAmComEq(cmVec2[scalarCommitIndex], scalarExternalCommitments, scalarLinkProof, verifier.CK2[scalarCommitIndex], ckScalar) {
-		log.Fatal("❌ Scalar AmComEq Failed")
+	switch linker {
+	case linkerSigma:
+		if !crypto.VerifyAmComEq(cmVec2[columnCommitIndex], columnExternalCommitments, columnSigmaProof, verifier.CK2[columnCommitIndex], ck1) {
+			log.Fatal("❌ Column AmComEq Failed")
+		}
+		if !crypto.VerifyAmComEq(cmVec2[scalarCommitIndex], scalarExternalCommitments, scalarSigmaProof, verifier.CK2[scalarCommitIndex], ckScalar) {
+			log.Fatal("❌ Scalar AmComEq Failed")
+		}
+	case linkerQANIZK:
+		if !crypto.VerifyQALink(cmVec2[columnCommitIndex], columnExternalCommitments, columnQAProof, columnQAVK) {
+			log.Fatal("❌ Column QA-NIZK link failed")
+		}
+		if !crypto.VerifyQALink(cmVec2[scalarCommitIndex], scalarExternalCommitments, scalarQAProof, scalarQAVK) {
+			log.Fatal("❌ Scalar QA-NIZK link failed")
+		}
+	default:
+		log.Fatalf("unsupported linker %q", linker)
 	}
 	cpLinkVerifyTime += time.Since(startCpLink).Seconds()
 
@@ -479,7 +548,13 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.M
 
 	merkleProofSize := L * 5 * depth * 32
 
-	cpLinkProofSize := crypto.AmComEqProofSizeBytes(columnLinkProof) + crypto.AmComEqProofSizeBytes(scalarLinkProof)
+	cpLinkProofSize := 0
+	switch linker {
+	case linkerSigma:
+		cpLinkProofSize = crypto.AmComEqProofSizeBytes(columnSigmaProof) + crypto.AmComEqProofSizeBytes(scalarSigmaProof)
+	case linkerQANIZK:
+		cpLinkProofSize = crypto.QALinkProofSizeBytes(columnQAProof) + crypto.QALinkProofSizeBytes(scalarQAProof)
+	}
 
 	totalProofSize := groth16ProofSize + merkleProofSize + cpLinkProofSize
 
@@ -489,11 +564,15 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.M
 	return benchmark.MeowResult{
 		LogK:              logK,
 		Rho:               rhoStr,
+		Linker:            linker,
 		N:                 N,
 		NumQueries:        L,
 		Constraints:       nbConstraints,
 		MatrixComputeTime: matrixComputeTime,
 		SetupTime:         setupTime,
+		ProtocolSetupTime: protocolSetupTime,
+		CircuitSetupTime:  circuitSetupTime,
+		CPLinkSetupTime:   cpLinkSetupTime,
 		MatrixCommitTime:  matCommitTime,
 		VectorCommitTime:  vecCommitTime,
 		MerkleProveTime:   merkleProveTime,
@@ -509,4 +588,16 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.M
 		CPLinkProofSize:   cpLinkProofSize,
 		TotalProofSize:    totalProofSize,
 	}
+}
+
+func normalizeLinker(linker string) string {
+	switch linker {
+	case "", linkerSigma:
+		return linkerSigma
+	case linkerQANIZK, "qa", "qanizk":
+		return linkerQANIZK
+	default:
+		log.Fatalf("unsupported linker %q; use %q or %q", linker, linkerSigma, linkerQANIZK)
+	}
+	return linkerSigma
 }

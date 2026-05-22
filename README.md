@@ -69,6 +69,13 @@ Square Meow:
 sh scripts/run_bench.sh meow --K 10 --rho 1/2 --L 128
 ```
 
+The square Meow benchmark supports two CP-link backends:
+
+```sh
+sh scripts/run_bench.sh meow --K 10 --rho 1/2 --L 128 --linker sigma
+sh scripts/run_bench.sh meow --K 10 --rho 1/2 --L 128 --linker qa_nizk
+```
+
 Square Freivalds:
 
 ```sh
@@ -100,7 +107,8 @@ C: 8 x 4
 GPT-2 Meow:
 
 ```sh
-sh scripts/run_gpt2_bench.sh meow --seq 7 --rho 1/2 --L 128
+sh scripts/run_gpt2_bench.sh meow --seq 7 --rho 1/2 --L 128 --linker sigma
+sh scripts/run_gpt2_bench.sh meow --seq 7 --rho 1/2 --L 128 --linker qa_nizk
 ```
 
 GPT-2 Freivalds:

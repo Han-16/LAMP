@@ -58,11 +58,15 @@ type FreivaldsResult struct {
 type MeowResult struct {
 	LogK              int
 	Rho               string
+	Linker            string
 	N                 int
 	NumQueries        int // L
 	Constraints       int
 	MatrixComputeTime float64
 	SetupTime         float64
+	ProtocolSetupTime float64
+	CircuitSetupTime  float64
+	CPLinkSetupTime   float64
 	MatrixCommitTime  float64
 	VectorCommitTime  float64
 	MerkleProveTime   float64
@@ -112,12 +116,16 @@ type MeowGPT2Result struct {
 	SeqLog            int
 	SeqLen            int
 	Rho               string
+	Linker            string
 	NumQueries        int
 	NumClaims         int
 	NumCommitGroups   int
 	Constraints       int
 	MatrixComputeTime float64
 	SetupTime         float64
+	ProtocolSetupTime float64
+	CircuitSetupTime  float64
+	CPLinkSetupTime   float64
 	CommitTime        float64
 	MerkleProveTime   float64
 	CircuitProveTime  float64
@@ -165,8 +173,9 @@ func AppendFreivaldsResultToCSV(writer *csv.Writer, res FreivaldsResult) {
 
 func InitMeowCSV(filename string) (*os.File, *csv.Writer) {
 	return initCSV(filename, []string{
-		"LogK", "Rho", "N", "NumQueries", "Constraints",
+		"LogK", "Rho", "Linker", "N", "NumQueries", "Constraints",
 		"MatrixComputeTime(s/ms)", "SetupTime(s/ms)",
+		"ProtocolSetupTime(s/ms)", "CircuitSetupTime(s/ms)", "CPLinkSetupTime(s/ms)",
 		"MatrixCommitTime(s/ms)", "VectorCommitTime(s/ms)", "MerkleProveTime(s/ms)", "CircuitProveTime(s/ms)",
 		"CPLinkProveTime(s/ms)", "TotalProveTime(s/ms)",
 		"CircuitVerifyTime(s/ms)", "MerkleVerifyTime(s/ms)", "CPLinkVerifyTime(s/ms)", "TotalVerifyTime(s/ms)",
@@ -178,11 +187,15 @@ func AppendMeowResultToCSV(writer *csv.Writer, res MeowResult) {
 	record := []string{
 		strconv.Itoa(res.LogK),
 		res.Rho,
+		res.Linker,
 		strconv.Itoa(res.N),
 		strconv.Itoa(res.NumQueries),
 		strconv.Itoa(res.Constraints),
 		formatSeconds(res.MatrixComputeTime),
 		formatSeconds(res.SetupTime),
+		formatSeconds(res.ProtocolSetupTime),
+		formatSeconds(res.CircuitSetupTime),
+		formatSeconds(res.CPLinkSetupTime),
 		formatSeconds(res.MatrixCommitTime),
 		formatSeconds(res.VectorCommitTime),
 		formatSeconds(res.MerkleProveTime),
@@ -198,7 +211,7 @@ func AppendMeowResultToCSV(writer *csv.Writer, res MeowResult) {
 		strconv.Itoa(res.CPLinkProofSize),
 		strconv.Itoa(res.TotalProofSize),
 	}
-	appendCSV(writer, record, fmt.Sprintf("Meow Protocol: logK=%d, rho=%s, L=%d, constraints=%d", res.LogK, res.Rho, res.NumQueries, res.Constraints))
+	appendCSV(writer, record, fmt.Sprintf("Meow Protocol: logK=%d, rho=%s, linker=%s, L=%d, constraints=%d", res.LogK, res.Rho, res.Linker, res.NumQueries, res.Constraints))
 }
 
 func InitRectMeowCSV(filename string) (*os.File, *csv.Writer) {
@@ -246,8 +259,10 @@ func AppendRectMeowResultToCSV(writer *csv.Writer, res RectMeowResult) {
 
 func InitMeowGPT2CSV(filename string) (*os.File, *csv.Writer) {
 	return initCSV(filename, []string{
-		"SeqLog", "SeqLen", "Rho", "NumQueries", "NumClaims", "NumCommitGroups", "Constraints",
-		"MatrixComputeTime(s/ms)", "SetupTime(s/ms)", "CommitTime(s/ms)", "MerkleProveTime(s/ms)", "CircuitProveTime(s/ms)",
+		"SeqLog", "SeqLen", "Rho", "Linker", "NumQueries", "NumClaims", "NumCommitGroups", "Constraints",
+		"MatrixComputeTime(s/ms)", "SetupTime(s/ms)",
+		"ProtocolSetupTime(s/ms)", "CircuitSetupTime(s/ms)", "CPLinkSetupTime(s/ms)",
+		"CommitTime(s/ms)", "MerkleProveTime(s/ms)", "CircuitProveTime(s/ms)",
 		"CPLinkProveTime(s/ms)", "TotalProveTime(s/ms)",
 		"CircuitVerifyTime(s/ms)", "MerkleVerifyTime(s/ms)", "CPLinkVerifyTime(s/ms)", "TotalVerifyTime(s/ms)",
 		"MerkleProofSize(B)", "Groth16ProofSize(B)", "CPLinkProofSize(B)", "TotalProofSize(B)",
@@ -259,12 +274,16 @@ func AppendMeowGPT2ResultToCSV(writer *csv.Writer, res MeowGPT2Result) {
 		strconv.Itoa(res.SeqLog),
 		strconv.Itoa(res.SeqLen),
 		res.Rho,
+		res.Linker,
 		strconv.Itoa(res.NumQueries),
 		strconv.Itoa(res.NumClaims),
 		strconv.Itoa(res.NumCommitGroups),
 		strconv.Itoa(res.Constraints),
 		formatSeconds(res.MatrixComputeTime),
 		formatSeconds(res.SetupTime),
+		formatSeconds(res.ProtocolSetupTime),
+		formatSeconds(res.CircuitSetupTime),
+		formatSeconds(res.CPLinkSetupTime),
 		formatSeconds(res.CommitTime),
 		formatSeconds(res.MerkleProveTime),
 		formatSeconds(res.CircuitProveTime),
@@ -279,7 +298,7 @@ func AppendMeowGPT2ResultToCSV(writer *csv.Writer, res MeowGPT2Result) {
 		strconv.Itoa(res.CPLinkProofSize),
 		strconv.Itoa(res.TotalProofSize),
 	}
-	appendCSV(writer, record, fmt.Sprintf("Meow GPT-2 medium layer: seq=2^%d, rho=%s, L=%d, claims=%d, constraints=%d", res.SeqLog, res.Rho, res.NumQueries, res.NumClaims, res.Constraints))
+	appendCSV(writer, record, fmt.Sprintf("Meow GPT-2 medium layer: seq=2^%d, rho=%s, linker=%s, L=%d, claims=%d, constraints=%d", res.SeqLog, res.Rho, res.Linker, res.NumQueries, res.NumClaims, res.Constraints))
 }
 
 func InitFreivaldsGPT2CSV(filename string) (*os.File, *csv.Writer) {
