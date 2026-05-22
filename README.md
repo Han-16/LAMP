@@ -9,7 +9,6 @@ Implemented experiments:
 
 - `meow`: square matrix multiplication with the Meow protocol.
 - `freivalds`: square matrix multiplication Freivalds baseline.
-- `rectmeow`: rectangular matrix multiplication with the Meow protocol.
 - `meow_gpt2`: Meow benchmark for one GPT-2 medium matmul-only layer.
 - `freivalds_gpt2`: Freivalds baseline for the same GPT-2 matmul-only layer.
 
@@ -49,7 +48,6 @@ constraint count without running Groth16 proving.
 ```sh
 sh scripts/run_bench.sh meow --K 10 --rho 1/2 --L 128 --compile
 sh scripts/run_bench.sh freivalds --K 10 --compile
-sh scripts/run_bench.sh rectmeow --rows 3 --inner 4 --cols 2 --rho 1/2 --L 2 --compile
 ```
 
 GPT-2 smoke tests:
@@ -69,10 +67,9 @@ Square Meow:
 sh scripts/run_bench.sh meow --K 10 --rho 1/2 --L 128
 ```
 
-The square Meow benchmark supports three CP-link backends and two Merkle opening modes:
+The square Meow benchmark supports two CP-link backends and two Merkle opening modes:
 
 ```sh
-sh scripts/run_bench.sh meow --K 10 --rho 1/2 --L 128 --linker sigma --merkle single
 sh scripts/run_bench.sh meow --K 10 --rho 1/2 --L 128 --linker qa_nizk --merkle multi
 sh scripts/run_bench.sh meow --K 10 --rho 1/2 --L 128 --linker qa_batch --merkle multi
 ```
@@ -83,32 +80,9 @@ Square Freivalds:
 sh scripts/run_bench.sh freivalds --K 10
 ```
 
-Rectangular Meow:
-
-```sh
-sh scripts/run_bench.sh rectmeow --rows 3 --inner 4 --cols 2 --rho 1/2 --L 2
-```
-
-For `rectmeow`, dimensions are log2 exponents:
-
-```text
-rows  = 2^--rows
-inner = 2^--inner
-cols  = 2^--cols
-```
-
-So `--rows 3 --inner 4 --cols 2` proves:
-
-```text
-A: 8 x 16
-B: 16 x 4
-C: 8 x 4
-```
-
 GPT-2 Meow:
 
 ```sh
-sh scripts/run_gpt2_bench.sh meow --seq 7 --rho 1/2 --L 128 --linker sigma --merkle single
 sh scripts/run_gpt2_bench.sh meow --seq 7 --rho 1/2 --L 128 --linker qa_nizk --merkle multi
 sh scripts/run_gpt2_bench.sh meow --seq 7 --rho 1/2 --L 128 --linker qa_batch --merkle multi
 ```
@@ -160,7 +134,6 @@ Benchmark CSV files are written under:
 ```text
 benchmark/meow/
 benchmark/freivalds/
-benchmark/rectmeow/
 benchmark/meow_gpt2/
 benchmark/freivalds_gpt2/
 ```
@@ -179,6 +152,5 @@ If Go `1.25.6` is available locally, the Docker scripts are not required:
 ```sh
 go test ./...
 go run ./cmd/meow --K 10 --rho 1/2 --L 128 --compile
-go run ./cmd/rectmeow --rows 3 --inner 4 --cols 2 --rho 1/2 --L 2 --compile
 go run ./cmd/meow_gpt2 --seq 7 --rho 1/2 --L 128 --compile
 ```

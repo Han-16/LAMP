@@ -16,7 +16,6 @@ usage() {
 	echo "usage: sh scripts/run_gpt2_bench.sh [meow|freivalds|meow_gpt2|freivalds_gpt2|all] [--range] [flags...]" >&2
 	echo "" >&2
 	echo "examples:" >&2
-	echo "  sh scripts/run_gpt2_bench.sh meow --seq 1 --rho 1/2 --L 1 --linker sigma --merkle single --compile" >&2
 	echo "  sh scripts/run_gpt2_bench.sh meow --seq 1 --rho 1/2 --L 1 --linker qa_nizk --merkle multi" >&2
 	echo "  sh scripts/run_gpt2_bench.sh meow --seq 1 --rho 1/2 --L 1 --linker qa_batch --merkle multi" >&2
 	echo "  sh scripts/run_gpt2_bench.sh freivalds --seq 1 --compile" >&2

@@ -28,7 +28,6 @@ import (
 )
 
 const (
-	linkerSigma   = "sigma"
 	linkerQANIZK  = "qa_nizk"
 	linkerQABatch = "qa_batch"
 )
@@ -46,7 +45,7 @@ func main() {
 	logKFlag := flag.Int("K", config.GetInt("MEOW_LOG_K", 10), "Log base 2 of K")
 	rhoFlag := flag.String("rho", config.GetString("MEOW_RHO", "1/2"), "Code rate")
 	LFlag := flag.Int("L", config.GetInt("MEOW_L", 128), "Number of unique indices L")
-	linkerFlag := flag.String("linker", config.GetString("MEOW_LINKER", linkerSigma), "CP-link backend: sigma, qa_nizk, or qa_batch")
+	linkerFlag := flag.String("linker", config.GetString("MEOW_LINKER", linkerQANIZK), "CP-link backend: qa_nizk or qa_batch")
 	merkleFlag := flag.String("merkle", config.GetString("MEOW_MERKLE", merkleSingle), "Merkle opening backend: single or multi")
 	allFlag := flag.Bool("all", config.GetBool("MEOW_ALL", false), "Run benchmark range")
 	fromFlag := flag.Int("from", config.GetInt("MEOW_LOG_K_FROM", 7), "First logK when -all is enabled")
@@ -455,38 +454,11 @@ func runExperiment(logK int, rhoStr string, L int, linker string, merkle string,
 		scalarExternalBlindings = append(scalarExternalBlindings, blYZ[idx])
 	}
 
-	var columnSigmaProof crypto.AmComEqProof
-	var scalarSigmaProof crypto.AmComEqProof
 	var columnQAProof crypto.QALinkProof
 	var scalarQAProof crypto.QALinkProof
 	var columnQABatchProof crypto.QABatchLinkProof
 	var scalarQABatchProof crypto.QABatchLinkProof
 	switch linker {
-	case linkerSigma:
-		columnSigmaProof, err = crypto.ProveAmComEq(
-			columnBlocks,
-			blindingsIn[columnCommitIndex],
-			columnExternalBlindings,
-			proverWithPK.CK2[columnCommitIndex],
-			ck1,
-			cmVec2[columnCommitIndex],
-			columnExternalCommitments,
-		)
-		if err != nil {
-			log.Fatalf("❌ Column AmComEq proof failed: %v", err)
-		}
-		scalarSigmaProof, err = crypto.ProveAmComEq(
-			scalarBlocks,
-			blindingsIn[scalarCommitIndex],
-			scalarExternalBlindings,
-			proverWithPK.CK2[scalarCommitIndex],
-			ckScalar,
-			cmVec2[scalarCommitIndex],
-			scalarExternalCommitments,
-		)
-		if err != nil {
-			log.Fatalf("❌ Scalar AmComEq proof failed: %v", err)
-		}
 	case linkerQANIZK:
 		columnQAProof, err = crypto.ProveQALink(
 			columnBlocks,
@@ -612,13 +584,6 @@ func runExperiment(logK int, rhoStr string, L int, linker string, merkle string,
 
 	startCpLink := time.Now()
 	switch linker {
-	case linkerSigma:
-		if !crypto.VerifyAmComEq(cmVec2[columnCommitIndex], columnExternalCommitments, columnSigmaProof, verifier.CK2[columnCommitIndex], ck1) {
-			log.Fatal("❌ Column AmComEq Failed")
-		}
-		if !crypto.VerifyAmComEq(cmVec2[scalarCommitIndex], scalarExternalCommitments, scalarSigmaProof, verifier.CK2[scalarCommitIndex], ckScalar) {
-			log.Fatal("❌ Scalar AmComEq Failed")
-		}
 	case linkerQANIZK:
 		if !crypto.VerifyQALink(cmVec2[columnCommitIndex], columnExternalCommitments, columnQAProof, columnQAVK) {
 			log.Fatal("❌ Column QA-NIZK link failed")
@@ -663,8 +628,6 @@ func runExperiment(logK int, rhoStr string, L int, linker string, merkle string,
 
 	cpLinkProofSize := 0
 	switch linker {
-	case linkerSigma:
-		cpLinkProofSize = crypto.AmComEqProofSizeBytes(columnSigmaProof) + crypto.AmComEqProofSizeBytes(scalarSigmaProof)
 	case linkerQANIZK:
 		cpLinkProofSize = crypto.QALinkProofSizeBytes(columnQAProof) + crypto.QALinkProofSizeBytes(scalarQAProof)
 	case linkerQABatch:
@@ -708,16 +671,14 @@ func runExperiment(logK int, rhoStr string, L int, linker string, merkle string,
 
 func normalizeLinker(linker string) string {
 	switch strings.ToLower(strings.TrimSpace(linker)) {
-	case "", linkerSigma:
-		return linkerSigma
-	case linkerQANIZK, "qa", "qanizk":
+	case "", linkerQANIZK, "qa", "qanizk":
 		return linkerQANIZK
 	case linkerQABatch, "qabatch", "qa_rlc", "qarlc":
 		return linkerQABatch
 	default:
-		log.Fatalf("unsupported linker %q; use %q, %q, or %q", linker, linkerSigma, linkerQANIZK, linkerQABatch)
+		log.Fatalf("unsupported linker %q; use %q or %q", linker, linkerQANIZK, linkerQABatch)
 	}
-	return linkerSigma
+	return linkerQANIZK
 }
 
 func normalizeMerkle(merkle string) string {

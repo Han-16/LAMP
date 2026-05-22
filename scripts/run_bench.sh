@@ -13,14 +13,13 @@ set +a
 image="${MEOWGO_DOCKER_IMAGE:-meowgo}"
 
 usage() {
-	echo "usage: scripts/run_bench.sh [meow|freivalds|rectmeow|all] [--range] [flags...]" >&2
+	echo "usage: scripts/run_bench.sh [meow|freivalds|all] [--range] [flags...]" >&2
 	echo "" >&2
 	echo "examples:" >&2
 	echo "  scripts/run_bench.sh meow --K 10 --L 128" >&2
 	echo "  scripts/run_bench.sh meow --K 10 --L 128 --linker qa_nizk --merkle multi" >&2
 	echo "  scripts/run_bench.sh meow --K 10 --L 128 --linker qa_batch --merkle multi" >&2
 	echo "  scripts/run_bench.sh freivalds --K 10 --compile" >&2
-	echo "  scripts/run_bench.sh rectmeow --rows 3 --inner 4 --cols 2 --L 2" >&2
 	echo "  scripts/run_bench.sh all --range --compile" >&2
 	exit 2
 }
@@ -50,7 +49,7 @@ for arg in "$@"; do
 done
 
 case "$target" in
-	meow|freivalds|rectmeow|all)
+	meow|freivalds|all)
 		;;
 	*)
 		usage
@@ -63,8 +62,7 @@ env_args="--env-file .env"
 
 for key in \
 	MEOW_LOG_K MEOW_RHO MEOW_L MEOW_LINKER MEOW_MERKLE MEOW_ALL MEOW_ONLY_COMPILE MEOW_OUTPUT_DIR MEOW_LOG_K_FROM MEOW_LOG_K_TO \
-	FREIVALDS_LOG_K FREIVALDS_ALL FREIVALDS_ONLY_COMPILE FREIVALDS_OUTPUT_DIR FREIVALDS_LOG_K_FROM FREIVALDS_LOG_K_TO \
-	RECTMEOW_ROWS RECTMEOW_INNER RECTMEOW_COLS RECTMEOW_RHO RECTMEOW_L RECTMEOW_ONLY_COMPILE RECTMEOW_OUTPUT_DIR
+	FREIVALDS_LOG_K FREIVALDS_ALL FREIVALDS_ONLY_COMPILE FREIVALDS_OUTPUT_DIR FREIVALDS_LOG_K_FROM FREIVALDS_LOG_K_TO
 do
 	value="$(eval "printf '%s' \"\${$key:-}\"")"
 	if [ -n "$value" ]; then
@@ -95,9 +93,6 @@ case "$target" in
 		;;
 	freivalds)
 		run_protocol freivalds
-		;;
-	rectmeow)
-		run_protocol rectmeow
 		;;
 	all)
 		run_protocol meow

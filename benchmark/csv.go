@@ -84,35 +84,6 @@ type MeowResult struct {
 	TotalProofSize    int
 }
 
-type RectMeowResult struct {
-	LogRows           int
-	LogInner          int
-	LogCols           int
-	Rows              int
-	Inner             int
-	Cols              int
-	Rho               string
-	NIn               int
-	NOut              int
-	NumQueries        int
-	Constraints       int
-	MatrixComputeTime float64
-	SetupTime         float64
-	MatrixCommitTime  float64
-	VectorCommitTime  float64
-	CircuitProveTime  float64
-	CPLinkProveTime   float64
-	TotalProveTime    float64
-	CircuitVerifyTime float64
-	MerkleVerifyTime  float64
-	CPLinkVerifyTime  float64
-	TotalVerifyTime   float64
-	MerkleProofSize   int
-	Groth16ProofSize  int
-	CPLinkProofSize   int
-	TotalProofSize    int
-}
-
 type MeowGPT2Result struct {
 	SeqLog            int
 	SeqLen            int
@@ -215,49 +186,6 @@ func AppendMeowResultToCSV(writer *csv.Writer, res MeowResult) {
 		strconv.Itoa(res.TotalProofSize),
 	}
 	appendCSV(writer, record, fmt.Sprintf("Meow Protocol: logK=%d, rho=%s, linker=%s, merkle=%s, L=%d, constraints=%d", res.LogK, res.Rho, res.Linker, res.Merkle, res.NumQueries, res.Constraints))
-}
-
-func InitRectMeowCSV(filename string) (*os.File, *csv.Writer) {
-	return initCSV(filename, []string{
-		"LogRows", "LogInner", "LogCols", "Rows", "Inner", "Cols", "Rho", "NIn", "NOut", "NumQueries", "Constraints",
-		"MatrixComputeTime(s/ms)", "SetupTime(s/ms)",
-		"MatrixCommitTime(s/ms)", "VectorCommitTime(s/ms)", "CircuitProveTime(s/ms)",
-		"CPLinkProveTime(s/ms)", "TotalProveTime(s/ms)",
-		"CircuitVerifyTime(s/ms)", "MerkleVerifyTime(s/ms)", "CPLinkVerifyTime(s/ms)", "TotalVerifyTime(s/ms)",
-		"MerkleProofSize(B)", "Groth16ProofSize(B)", "CPLinkProofSize(B)", "TotalProofSize(B)",
-	})
-}
-
-func AppendRectMeowResultToCSV(writer *csv.Writer, res RectMeowResult) {
-	record := []string{
-		strconv.Itoa(res.LogRows),
-		strconv.Itoa(res.LogInner),
-		strconv.Itoa(res.LogCols),
-		strconv.Itoa(res.Rows),
-		strconv.Itoa(res.Inner),
-		strconv.Itoa(res.Cols),
-		res.Rho,
-		strconv.Itoa(res.NIn),
-		strconv.Itoa(res.NOut),
-		strconv.Itoa(res.NumQueries),
-		strconv.Itoa(res.Constraints),
-		formatSeconds(res.MatrixComputeTime),
-		formatSeconds(res.SetupTime),
-		formatSeconds(res.MatrixCommitTime),
-		formatSeconds(res.VectorCommitTime),
-		formatSeconds(res.CircuitProveTime),
-		formatSeconds(res.CPLinkProveTime),
-		formatSeconds(res.TotalProveTime),
-		formatSeconds(res.CircuitVerifyTime),
-		formatSeconds(res.MerkleVerifyTime),
-		formatSeconds(res.CPLinkVerifyTime),
-		formatSeconds(res.TotalVerifyTime),
-		strconv.Itoa(res.MerkleProofSize),
-		strconv.Itoa(res.Groth16ProofSize),
-		strconv.Itoa(res.CPLinkProofSize),
-		strconv.Itoa(res.TotalProofSize),
-	}
-	appendCSV(writer, record, fmt.Sprintf("RectMeow Protocol: logRows=%d, logInner=%d, logCols=%d, rows=%d, inner=%d, cols=%d, rho=%s, L=%d, constraints=%d", res.LogRows, res.LogInner, res.LogCols, res.Rows, res.Inner, res.Cols, res.Rho, res.NumQueries, res.Constraints))
 }
 
 func InitMeowGPT2CSV(filename string) (*os.File, *csv.Writer) {
