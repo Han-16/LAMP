@@ -28,8 +28,9 @@ import (
 )
 
 const (
-	linkerSigma  = "sigma"
-	linkerQANIZK = "qa_nizk"
+	linkerSigma   = "sigma"
+	linkerQANIZK  = "qa_nizk"
+	linkerQABatch = "qa_batch"
 )
 
 const (
@@ -45,7 +46,7 @@ func main() {
 	logKFlag := flag.Int("K", config.GetInt("MEOW_LOG_K", 10), "Log base 2 of K")
 	rhoFlag := flag.String("rho", config.GetString("MEOW_RHO", "1/2"), "Code rate")
 	LFlag := flag.Int("L", config.GetInt("MEOW_L", 128), "Number of unique indices L")
-	linkerFlag := flag.String("linker", config.GetString("MEOW_LINKER", linkerSigma), "CP-link backend: sigma or qa_nizk")
+	linkerFlag := flag.String("linker", config.GetString("MEOW_LINKER", linkerSigma), "CP-link backend: sigma, qa_nizk, or qa_batch")
 	merkleFlag := flag.String("merkle", config.GetString("MEOW_MERKLE", merkleSingle), "Merkle opening backend: single or multi")
 	allFlag := flag.Bool("all", config.GetBool("MEOW_ALL", false), "Run benchmark range")
 	fromFlag := flag.Int("from", config.GetInt("MEOW_LOG_K_FROM", 7), "First logK when -all is enabled")
@@ -332,16 +333,32 @@ func runExperiment(logK int, rhoStr string, L int, linker string, merkle string,
 	var columnQAVK crypto.QALinkVerifyingKey
 	var scalarQAPK crypto.QALinkProvingKey
 	var scalarQAVK crypto.QALinkVerifyingKey
-	if linker == linkerQANIZK {
+	var columnQABatchPK crypto.QABatchLinkProvingKey
+	var columnQABatchVK crypto.QABatchLinkVerifyingKey
+	var scalarQABatchPK crypto.QABatchLinkProvingKey
+	var scalarQABatchVK crypto.QABatchLinkVerifyingKey
+	if linker == linkerQANIZK || linker == linkerQABatch {
 		startCPLinkSetup := time.Now()
 		var err error
-		columnQAPK, columnQAVK, err = crypto.SetupQALink(3*L, K, proverWithPK.CK2[columnCommitIndex], ck1)
-		if err != nil {
-			log.Fatalf("❌ Column QA-NIZK setup failed: %v", err)
-		}
-		scalarQAPK, scalarQAVK, err = crypto.SetupQALink(2*L, 1, proverWithPK.CK2[scalarCommitIndex], ckScalar)
-		if err != nil {
-			log.Fatalf("❌ Scalar QA-NIZK setup failed: %v", err)
+		switch linker {
+		case linkerQANIZK:
+			columnQAPK, columnQAVK, err = crypto.SetupQALink(3*L, K, proverWithPK.CK2[columnCommitIndex], ck1)
+			if err != nil {
+				log.Fatalf("❌ Column QA-NIZK setup failed: %v", err)
+			}
+			scalarQAPK, scalarQAVK, err = crypto.SetupQALink(2*L, 1, proverWithPK.CK2[scalarCommitIndex], ckScalar)
+			if err != nil {
+				log.Fatalf("❌ Scalar QA-NIZK setup failed: %v", err)
+			}
+		case linkerQABatch:
+			columnQABatchPK, columnQABatchVK, err = crypto.SetupQABatchLink(3*L, K, proverWithPK.CK2[columnCommitIndex], ck1)
+			if err != nil {
+				log.Fatalf("❌ Column QA-batch setup failed: %v", err)
+			}
+			scalarQABatchPK, scalarQABatchVK, err = crypto.SetupQABatchLink(2*L, 1, proverWithPK.CK2[scalarCommitIndex], ckScalar)
+			if err != nil {
+				log.Fatalf("❌ Scalar QA-batch setup failed: %v", err)
+			}
 		}
 		cpLinkSetupTime += time.Since(startCPLinkSetup).Seconds()
 	}
@@ -442,6 +459,8 @@ func runExperiment(logK int, rhoStr string, L int, linker string, merkle string,
 	var scalarSigmaProof crypto.AmComEqProof
 	var columnQAProof crypto.QALinkProof
 	var scalarQAProof crypto.QALinkProof
+	var columnQABatchProof crypto.QABatchLinkProof
+	var scalarQABatchProof crypto.QABatchLinkProof
 	switch linker {
 	case linkerSigma:
 		columnSigmaProof, err = crypto.ProveAmComEq(
@@ -486,6 +505,31 @@ func runExperiment(logK int, rhoStr string, L int, linker string, merkle string,
 		)
 		if err != nil {
 			log.Fatalf("❌ Scalar QA-NIZK proof failed: %v", err)
+		}
+	case linkerQABatch:
+		columnQABatchProof, err = crypto.ProveQABatchLink(
+			columnBlocks,
+			blindingsIn[columnCommitIndex],
+			columnExternalBlindings,
+			columnQABatchPK,
+			cmVec2[columnCommitIndex],
+			columnExternalCommitments,
+			meowQABatchContext(1, []fr.Element{cmA, cmB, cmC}, indices)...,
+		)
+		if err != nil {
+			log.Fatalf("❌ Column QA-batch proof failed: %v", err)
+		}
+		scalarQABatchProof, err = crypto.ProveQABatchLink(
+			scalarBlocks,
+			blindingsIn[scalarCommitIndex],
+			scalarExternalBlindings,
+			scalarQABatchPK,
+			cmVec2[scalarCommitIndex],
+			scalarExternalCommitments,
+			meowQABatchContext(2, []fr.Element{cmX, cmYZ}, indices)...,
+		)
+		if err != nil {
+			log.Fatalf("❌ Scalar QA-batch proof failed: %v", err)
 		}
 	default:
 		log.Fatalf("unsupported linker %q", linker)
@@ -582,6 +626,13 @@ func runExperiment(logK int, rhoStr string, L int, linker string, merkle string,
 		if !crypto.VerifyQALink(cmVec2[scalarCommitIndex], scalarExternalCommitments, scalarQAProof, scalarQAVK) {
 			log.Fatal("❌ Scalar QA-NIZK link failed")
 		}
+	case linkerQABatch:
+		if !crypto.VerifyQABatchLink(cmVec2[columnCommitIndex], columnExternalCommitments, columnQABatchProof, columnQABatchVK, meowQABatchContext(1, []fr.Element{cmA, cmB, cmC}, indices)...) {
+			log.Fatal("❌ Column QA-batch link failed")
+		}
+		if !crypto.VerifyQABatchLink(cmVec2[scalarCommitIndex], scalarExternalCommitments, scalarQABatchProof, scalarQABatchVK, meowQABatchContext(2, []fr.Element{cmX, cmYZ}, indices)...) {
+			log.Fatal("❌ Scalar QA-batch link failed")
+		}
 	default:
 		log.Fatalf("unsupported linker %q", linker)
 	}
@@ -600,13 +651,14 @@ func runExperiment(logK int, rhoStr string, L int, linker string, merkle string,
 	merkleProofSize := 0
 	switch merkle {
 	case merkleSingle:
-		merkleProofSize = L * 5 * depth * crypto.MerkleHashSizeBytes
+		merkleProofSize = L*5*depth*crypto.MerkleHashSizeBytes + L*5*crypto.G1AffineSizeBytes
 	case merkleMulti:
 		merkleProofSize = crypto.MerkleMultiProofSizeBytes(mmpA) +
 			crypto.MerkleMultiProofSizeBytes(mmpB) +
 			crypto.MerkleMultiProofSizeBytes(mmpC) +
 			crypto.MerkleMultiProofSizeBytes(mmpX) +
-			crypto.MerkleMultiProofSizeBytes(mmpYZ)
+			crypto.MerkleMultiProofSizeBytes(mmpYZ) +
+			L*5*crypto.G1AffineSizeBytes
 	}
 
 	cpLinkProofSize := 0
@@ -615,6 +667,8 @@ func runExperiment(logK int, rhoStr string, L int, linker string, merkle string,
 		cpLinkProofSize = crypto.AmComEqProofSizeBytes(columnSigmaProof) + crypto.AmComEqProofSizeBytes(scalarSigmaProof)
 	case linkerQANIZK:
 		cpLinkProofSize = crypto.QALinkProofSizeBytes(columnQAProof) + crypto.QALinkProofSizeBytes(scalarQAProof)
+	case linkerQABatch:
+		cpLinkProofSize = crypto.QABatchLinkProofSizeBytes(columnQABatchProof) + crypto.QABatchLinkProofSizeBytes(scalarQABatchProof)
 	}
 
 	totalProofSize := groth16ProofSize + merkleProofSize + cpLinkProofSize
@@ -658,8 +712,10 @@ func normalizeLinker(linker string) string {
 		return linkerSigma
 	case linkerQANIZK, "qa", "qanizk":
 		return linkerQANIZK
+	case linkerQABatch, "qabatch", "qa_rlc", "qarlc":
+		return linkerQABatch
 	default:
-		log.Fatalf("unsupported linker %q; use %q or %q", linker, linkerSigma, linkerQANIZK)
+		log.Fatalf("unsupported linker %q; use %q, %q, or %q", linker, linkerSigma, linkerQANIZK, linkerQABatch)
 	}
 	return linkerSigma
 }
@@ -681,5 +737,21 @@ func selectCommitments(leaves []bn254.G1Affine, indices []int) []bn254.G1Affine 
 	for i, idx := range indices {
 		out[i] = leaves[idx]
 	}
+	return out
+}
+
+func meowQABatchContext(label uint64, roots []fr.Element, indices []int) []fr.Element {
+	context := make([]fr.Element, 0, 3+len(roots)+len(indices))
+	context = append(context, uint64Element(0x4d454f5742415443), uint64Element(label), uint64Element(uint64(len(indices))))
+	context = append(context, roots...)
+	for _, idx := range indices {
+		context = append(context, uint64Element(uint64(idx)))
+	}
+	return context
+}
+
+func uint64Element(value uint64) fr.Element {
+	var out fr.Element
+	out.SetUint64(value)
 	return out
 }

@@ -28,6 +28,29 @@ type QALinkProof struct {
 	Pi bn254.G1Affine
 }
 
+type QABatchLinkProvingKey struct {
+	SnarkG     []bn254.G1Affine
+	SnarkH     bn254.G1Affine
+	ExternalG  []bn254.G1Affine
+	ExternalH  bn254.G1Affine
+	BlockCount int
+	BlockLen   int
+}
+
+type QABatchLinkVerifyingKey struct {
+	C0         bn254.G2Affine
+	C1         bn254.G2Affine
+	A          bn254.G2Affine
+	BlockCount int
+	BlockLen   int
+}
+
+type QABatchLinkProof struct {
+	Pi bn254.G1Affine
+}
+
+const G1AffineSizeBytes = 64
+
 func SetupQALink(blockCount, blockLen int, snarkCK CommitKey, externalCK CommitKey) (QALinkProvingKey, QALinkVerifyingKey, error) {
 	if blockCount <= 0 || blockLen <= 0 {
 		return QALinkProvingKey{}, QALinkVerifyingKey{}, fmt.Errorf("qa-link requires positive block count and block length")
@@ -114,6 +137,62 @@ func SetupQALink(blockCount, blockLen int, snarkCK CommitKey, externalCK CommitK
 	return pk, vk, nil
 }
 
+func SetupQABatchLink(blockCount, blockLen int, snarkCK CommitKey, externalCK CommitKey) (QABatchLinkProvingKey, QABatchLinkVerifyingKey, error) {
+	if blockCount <= 0 || blockLen <= 0 {
+		return QABatchLinkProvingKey{}, QABatchLinkVerifyingKey{}, fmt.Errorf("qa-batch-link requires positive block count and block length")
+	}
+	if len(snarkCK.G) != blockCount*blockLen {
+		return QABatchLinkProvingKey{}, QABatchLinkVerifyingKey{}, fmt.Errorf("snark commitment key length must match flattened blocks")
+	}
+	if len(externalCK.G) != blockLen {
+		return QABatchLinkProvingKey{}, QABatchLinkVerifyingKey{}, fmt.Errorf("external commitment key length must match block length")
+	}
+
+	k0 := randomNonZeroElement()
+	k1 := randomNonZeroElement()
+	a := randomNonZeroElement()
+	k0Big := elementBigInt(k0)
+	k1Big := elementBigInt(k1)
+
+	snarkG := scaleG1Points(snarkCK.G, k0Big)
+	externalG := scaleG1Points(externalCK.G, k1Big)
+
+	var snarkH bn254.G1Affine
+	snarkH.ScalarMultiplication(&snarkCK.H, &k0Big)
+	var externalH bn254.G1Affine
+	externalH.ScalarMultiplication(&externalCK.H, &k1Big)
+
+	var ak0, ak1 fr.Element
+	ak0.Mul(&a, &k0)
+	ak1.Mul(&a, &k1)
+
+	_, _, _, g2 := bn254.Generators()
+	var ak0Big, ak1Big, aBig big.Int
+	ak0.BigInt(&ak0Big)
+	ak1.BigInt(&ak1Big)
+	a.BigInt(&aBig)
+
+	var c0, c1, aG2 bn254.G2Affine
+	c0.ScalarMultiplication(&g2, &ak0Big)
+	c1.ScalarMultiplication(&g2, &ak1Big)
+	aG2.ScalarMultiplication(&g2, &aBig)
+
+	return QABatchLinkProvingKey{
+			SnarkG:     snarkG,
+			SnarkH:     snarkH,
+			ExternalG:  externalG,
+			ExternalH:  externalH,
+			BlockCount: blockCount,
+			BlockLen:   blockLen,
+		}, QABatchLinkVerifyingKey{
+			C0:         c0,
+			C1:         c1,
+			A:          aG2,
+			BlockCount: blockCount,
+			BlockLen:   blockLen,
+		}, nil
+}
+
 func ProveQALink(blocks [][]fr.Element, alpha fr.Element, betas []fr.Element, pk QALinkProvingKey) (QALinkProof, error) {
 	if err := validateQALinkWitnessShape(blocks, betas, pk.BlockCount, pk.BlockLen); err != nil {
 		return QALinkProof{}, err
@@ -135,6 +214,39 @@ func ProveQALink(blocks [][]fr.Element, alpha fr.Element, betas []fr.Element, pk
 	}
 
 	return QALinkProof{Pi: proof}, nil
+}
+
+func ProveQABatchLink(
+	blocks [][]fr.Element,
+	alpha fr.Element,
+	betas []fr.Element,
+	pk QABatchLinkProvingKey,
+	snarkCommit bn254.G1Affine,
+	externalCommits []bn254.G1Affine,
+	context ...fr.Element,
+) (QABatchLinkProof, error) {
+	if err := validateQALinkWitnessShape(blocks, betas, pk.BlockCount, pk.BlockLen); err != nil {
+		return QABatchLinkProof{}, err
+	}
+	if len(externalCommits) != pk.BlockCount {
+		return QABatchLinkProof{}, fmt.Errorf("external commitment count must match qa-batch-link setup")
+	}
+	if len(pk.SnarkG) != pk.BlockCount*pk.BlockLen || len(pk.ExternalG) != pk.BlockLen {
+		return QABatchLinkProof{}, fmt.Errorf("qa-batch-link proving key length mismatch")
+	}
+
+	weights := deriveQABatchWeights(snarkCommit, externalCommits, pk.BlockCount, pk.BlockLen, context)
+
+	snarkCommitKey := CommitKey{G: pk.SnarkG, H: pk.SnarkH}
+	snarkPart := PedersenCommitBlinded(flattenBlocks(blocks), alpha, snarkCommitKey)
+
+	aggBlock, aggBeta := aggregateQABatchWitness(blocks, betas, weights, pk.BlockLen)
+	externalCommitKey := CommitKey{G: pk.ExternalG, H: pk.ExternalH}
+	externalPart := PedersenCommitBlinded(aggBlock, aggBeta, externalCommitKey)
+
+	var pi bn254.G1Affine
+	pi.Add(&snarkPart, &externalPart)
+	return QABatchLinkProof{Pi: pi}, nil
 }
 
 func VerifyQALink(snarkCommit bn254.G1Affine, externalCommits []bn254.G1Affine, proof QALinkProof, vk QALinkVerifyingKey) bool {
@@ -161,8 +273,38 @@ func VerifyQALink(snarkCommit bn254.G1Affine, externalCommits []bn254.G1Affine, 
 	return err == nil && ok
 }
 
+func VerifyQABatchLink(
+	snarkCommit bn254.G1Affine,
+	externalCommits []bn254.G1Affine,
+	proof QABatchLinkProof,
+	vk QABatchLinkVerifyingKey,
+	context ...fr.Element,
+) bool {
+	if len(externalCommits) != vk.BlockCount || vk.BlockCount <= 0 || vk.BlockLen <= 0 {
+		return false
+	}
+
+	weights := deriveQABatchWeights(snarkCommit, externalCommits, vk.BlockCount, vk.BlockLen, context)
+	var aggregatedExternalCommit bn254.G1Affine
+	if _, err := aggregatedExternalCommit.MultiExp(externalCommits, weights, ecc.MultiExpConfig{}); err != nil {
+		return false
+	}
+
+	var negA bn254.G2Affine
+	negA.Neg(&vk.A)
+	ok, err := bn254.PairingCheck(
+		[]bn254.G1Affine{snarkCommit, aggregatedExternalCommit, proof.Pi},
+		[]bn254.G2Affine{vk.C0, vk.C1, negA},
+	)
+	return err == nil && ok
+}
+
 func QALinkProofSizeBytes(QALinkProof) int {
-	return 64
+	return G1AffineSizeBytes
+}
+
+func QABatchLinkProofSizeBytes(QABatchLinkProof) int {
+	return G1AffineSizeBytes
 }
 
 func validateQALinkWitnessShape(blocks [][]fr.Element, betas []fr.Element, blockCount, blockLen int) error {
@@ -178,6 +320,81 @@ func validateQALinkWitnessShape(blocks [][]fr.Element, betas []fr.Element, block
 		}
 	}
 	return nil
+}
+
+func deriveQABatchWeights(snarkCommit bn254.G1Affine, externalCommits []bn254.G1Affine, blockCount, blockLen int, context []fr.Element) []fr.Element {
+	elements := make([]fr.Element, 0, 4+len(context)+1+len(externalCommits))
+	var domain, countElement, lenElement fr.Element
+	domain.SetUint64(0x51414241544348) // "QABATCH"
+	countElement.SetUint64(uint64(blockCount))
+	lenElement.SetUint64(uint64(blockLen))
+	elements = append(elements, domain, countElement, lenElement)
+	elements = append(elements, context...)
+	elements = append(elements, HashPoint(snarkCommit))
+	for i := range externalCommits {
+		elements = append(elements, HashPoint(externalCommits[i]))
+	}
+	seed := HashElements(elements...)
+
+	weights := make([]fr.Element, blockCount)
+	for i := range weights {
+		var idx fr.Element
+		idx.SetUint64(uint64(i))
+		weights[i] = HashElements(seed, idx)
+		for retry := uint64(1); weights[i].IsZero(); retry++ {
+			var retryElement fr.Element
+			retryElement.SetUint64(retry)
+			weights[i] = HashElements(seed, idx, retryElement)
+		}
+	}
+	return weights
+}
+
+func aggregateQABatchWitness(blocks [][]fr.Element, betas []fr.Element, weights []fr.Element, blockLen int) ([]fr.Element, fr.Element) {
+	aggBlock := make([]fr.Element, blockLen)
+	var aggBeta fr.Element
+	for i := range blocks {
+		for j := 0; j < blockLen; j++ {
+			var term fr.Element
+			term.Mul(&weights[i], &blocks[i][j])
+			aggBlock[j].Add(&aggBlock[j], &term)
+		}
+
+		var betaTerm fr.Element
+		betaTerm.Mul(&weights[i], &betas[i])
+		aggBeta.Add(&aggBeta, &betaTerm)
+	}
+	return aggBlock, aggBeta
+}
+
+func scaleG1Points(points []bn254.G1Affine, scalar big.Int) []bn254.G1Affine {
+	out := make([]bn254.G1Affine, len(points))
+	if len(points) == 0 {
+		return out
+	}
+
+	numWorkers := runtime.NumCPU()
+	chunkSize := (len(points) + numWorkers - 1) / numWorkers
+	var wg sync.WaitGroup
+	for worker := 0; worker < numWorkers; worker++ {
+		start := worker * chunkSize
+		end := start + chunkSize
+		if end > len(points) {
+			end = len(points)
+		}
+		if start >= end {
+			break
+		}
+		wg.Add(1)
+		go func(start, end int) {
+			defer wg.Done()
+			for i := start; i < end; i++ {
+				out[i].ScalarMultiplication(&points[i], &scalar)
+			}
+		}(start, end)
+	}
+	wg.Wait()
+	return out
 }
 
 func elementBigInt(v fr.Element) big.Int {

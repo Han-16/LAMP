@@ -18,6 +18,7 @@ usage() {
 	echo "examples:" >&2
 	echo "  sh scripts/run_gpt2_bench.sh meow --seq 1 --rho 1/2 --L 1 --linker sigma --merkle single --compile" >&2
 	echo "  sh scripts/run_gpt2_bench.sh meow --seq 1 --rho 1/2 --L 1 --linker qa_nizk --merkle multi" >&2
+	echo "  sh scripts/run_gpt2_bench.sh meow --seq 1 --rho 1/2 --L 1 --linker qa_batch --merkle multi" >&2
 	echo "  sh scripts/run_gpt2_bench.sh freivalds --seq 1 --compile" >&2
 	echo "  sh scripts/run_gpt2_bench.sh all --range --from 0 --to 4 --compile" >&2
 	exit 2

@@ -69,11 +69,12 @@ Square Meow:
 sh scripts/run_bench.sh meow --K 10 --rho 1/2 --L 128
 ```
 
-The square Meow benchmark supports two CP-link backends and two Merkle opening modes:
+The square Meow benchmark supports three CP-link backends and two Merkle opening modes:
 
 ```sh
 sh scripts/run_bench.sh meow --K 10 --rho 1/2 --L 128 --linker sigma --merkle single
 sh scripts/run_bench.sh meow --K 10 --rho 1/2 --L 128 --linker qa_nizk --merkle multi
+sh scripts/run_bench.sh meow --K 10 --rho 1/2 --L 128 --linker qa_batch --merkle multi
 ```
 
 Square Freivalds:
@@ -109,6 +110,7 @@ GPT-2 Meow:
 ```sh
 sh scripts/run_gpt2_bench.sh meow --seq 7 --rho 1/2 --L 128 --linker sigma --merkle single
 sh scripts/run_gpt2_bench.sh meow --seq 7 --rho 1/2 --L 128 --linker qa_nizk --merkle multi
+sh scripts/run_gpt2_bench.sh meow --seq 7 --rho 1/2 --L 128 --linker qa_batch --merkle multi
 ```
 
 GPT-2 Freivalds:

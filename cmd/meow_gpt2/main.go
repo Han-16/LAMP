@@ -38,8 +38,9 @@ const (
 )
 
 const (
-	linkerSigma  = "sigma"
-	linkerQANIZK = "qa_nizk"
+	linkerSigma   = "sigma"
+	linkerQANIZK  = "qa_nizk"
+	linkerQABatch = "qa_batch"
 )
 
 const (
@@ -184,7 +185,7 @@ func main() {
 	seqFlag := flag.Int("seq", config.GetInt("MEOW_GPT2_SEQ", 1), "Log2 sequence length")
 	rhoFlag := flag.String("rho", config.GetString("MEOW_GPT2_RHO", "1/2"), "Code rate, 1/2 or 1/4")
 	LFlag := flag.Int("L", config.GetInt("MEOW_GPT2_L", 1), "Number of sampled queries per matmul and wiring check")
-	linkerFlag := flag.String("linker", config.GetString("MEOW_GPT2_LINKER", linkerSigma), "CP-link backend: sigma or qa_nizk")
+	linkerFlag := flag.String("linker", config.GetString("MEOW_GPT2_LINKER", linkerSigma), "CP-link backend: sigma, qa_nizk, or qa_batch")
 	merkleFlag := flag.String("merkle", config.GetString("MEOW_GPT2_MERKLE", merkleSingle), "Merkle opening backend: single or multi")
 	allFlag := flag.Bool("all", config.GetBool("MEOW_GPT2_ALL", false), "Run benchmark range")
 	rangeFlag := flag.Bool("range", false, "Alias for -all")
@@ -283,16 +284,28 @@ func runExperiment(seqLog int, rho string, L int, linker string, merkle string, 
 	cpLinkSetupTime := 0.0
 	qaProvingKeys := make([]crypto.QALinkProvingKey, numGroups)
 	qaVerifyingKeys := make([]crypto.QALinkVerifyingKey, numGroups)
-	if linker == linkerQANIZK {
+	qaBatchProvingKeys := make([]crypto.QABatchLinkProvingKey, numGroups)
+	qaBatchVerifyingKeys := make([]crypto.QABatchLinkVerifyingKey, numGroups)
+	if linker == linkerQANIZK || linker == linkerQABatch {
 		startCPLinkSetup := time.Now()
 		for groupID := 0; groupID < numGroups; groupID++ {
 			blocks, _, _ := prep.sampleCPLinkData(groupID)
-			qaPK, qaVK, err := crypto.SetupQALink(len(blocks), prep.extGroups[groupID].blockLen, prover.CK2[groupID], prep.extGroups[groupID].ck)
-			if err != nil {
-				log.Fatalf("group %d QA-NIZK setup failed: %v", groupID, err)
+			switch linker {
+			case linkerQANIZK:
+				qaPK, qaVK, err := crypto.SetupQALink(len(blocks), prep.extGroups[groupID].blockLen, prover.CK2[groupID], prep.extGroups[groupID].ck)
+				if err != nil {
+					log.Fatalf("group %d QA-NIZK setup failed: %v", groupID, err)
+				}
+				qaProvingKeys[groupID] = qaPK
+				qaVerifyingKeys[groupID] = qaVK
+			case linkerQABatch:
+				qaPK, qaVK, err := crypto.SetupQABatchLink(len(blocks), prep.extGroups[groupID].blockLen, prover.CK2[groupID], prep.extGroups[groupID].ck)
+				if err != nil {
+					log.Fatalf("group %d QA-batch setup failed: %v", groupID, err)
+				}
+				qaBatchProvingKeys[groupID] = qaPK
+				qaBatchVerifyingKeys[groupID] = qaVK
 			}
-			qaProvingKeys[groupID] = qaPK
-			qaVerifyingKeys[groupID] = qaVK
 		}
 		cpLinkSetupTime = time.Since(startCPLinkSetup).Seconds()
 	}
@@ -316,6 +329,7 @@ func runExperiment(seqLog int, rho string, L int, linker string, merkle string, 
 	startOffline := time.Now()
 	sigmaLinkProofs := make([]crypto.AmComEqProof, numGroups)
 	qaLinkProofs := make([]crypto.QALinkProof, numGroups)
+	qaBatchLinkProofs := make([]crypto.QABatchLinkProof, numGroups)
 	switch linker {
 	case linkerSigma:
 		for groupID := 0; groupID < numGroups; groupID++ {
@@ -334,6 +348,23 @@ func runExperiment(seqLog int, rho string, L int, linker string, merkle string, 
 				log.Fatalf("group %d QA-NIZK link proof failed: %v", groupID, err)
 			}
 			qaLinkProofs[groupID] = linkProof
+		}
+	case linkerQABatch:
+		for groupID := 0; groupID < numGroups; groupID++ {
+			blocks, commits, blindings := prep.sampleCPLinkData(groupID)
+			linkProof, err := crypto.ProveQABatchLink(
+				blocks,
+				blindingsIn[groupID],
+				blindings,
+				qaBatchProvingKeys[groupID],
+				cmVec2[groupID],
+				commits,
+				prep.qaBatchContext(groupID)...,
+			)
+			if err != nil {
+				log.Fatalf("group %d QA-batch link proof failed: %v", groupID, err)
+			}
+			qaBatchLinkProofs[groupID] = linkProof
 		}
 	default:
 		log.Fatalf("unsupported linker %q", linker)
@@ -376,6 +407,13 @@ func runExperiment(seqLog int, rho string, L int, linker string, merkle string, 
 				log.Fatalf("group %d QA-NIZK link verification failed", groupID)
 			}
 		}
+	case linkerQABatch:
+		for groupID := 0; groupID < numGroups; groupID++ {
+			_, commits, _ := prep.sampleCPLinkData(groupID)
+			if !crypto.VerifyQABatchLink(cmVec2[groupID], commits, qaBatchLinkProofs[groupID], qaBatchVerifyingKeys[groupID], prep.qaBatchContext(groupID)...) {
+				log.Fatalf("group %d QA-batch link verification failed", groupID)
+			}
+		}
 	default:
 		log.Fatalf("unsupported linker %q", linker)
 	}
@@ -395,6 +433,10 @@ func runExperiment(seqLog int, rho string, L int, linker string, merkle string, 
 	case linkerQANIZK:
 		for i := range qaLinkProofs {
 			cpLinkProofSize += crypto.QALinkProofSizeBytes(qaLinkProofs[i])
+		}
+	case linkerQABatch:
+		for i := range qaBatchLinkProofs {
+			cpLinkProofSize += crypto.QABatchLinkProofSizeBytes(qaBatchLinkProofs[i])
 		}
 	}
 	totalProofSize := groth16ProofSize + merkleProofSize + cpLinkProofSize
@@ -1341,6 +1383,33 @@ func (p *preparedLayer) sampleCPLinkData(groupID int) ([][]fr.Element, []bn254.G
 	return sg.blocks, sg.commits, sg.blindings
 }
 
+func (p *preparedLayer) qaBatchContext(groupID int) []fr.Element {
+	ext := p.extGroups[groupID]
+	context := []fr.Element{
+		uint64Element(0x4750543242415443), // "GPT2BATC"
+		uint64Element(uint64(groupID)),
+		p.tensorCm,
+		p.globalCm,
+		ext.root,
+		uint64Element(uint64(ext.depth)),
+	}
+
+	if groupID == groupScalar {
+		context = append(context, uint64Element(uint64(len(p.scalarLeafIdx))))
+		for i, leafIdx := range p.scalarLeafIdx {
+			context = appendMerkleOpeningContext(context, leafIdx, p.scalarMetas[i])
+		}
+		return context
+	}
+
+	sg := p.sampleGroups[groupID]
+	context = append(context, uint64Element(uint64(len(sg.leafIndices))))
+	for i, leafIdx := range sg.leafIndices {
+		context = appendMerkleOpeningContext(context, leafIdx, sg.metas[i])
+	}
+	return context
+}
+
 func (p *preparedLayer) verifyMerkleGroup(verifier *protocol.Verifier, groupID int) bool {
 	ext := p.extGroups[groupID]
 	if groupID == groupScalar {
@@ -1386,7 +1455,16 @@ func (p *preparedLayer) merkleProofSize() int {
 		}
 		size += crypto.MerkleMultiProofSizeBytes(p.scalarMultiProof)
 	}
+	size += p.openedMerkleCommitmentCount() * crypto.G1AffineSizeBytes
 	return size
+}
+
+func (p *preparedLayer) openedMerkleCommitmentCount() int {
+	count := len(p.scalarCommits)
+	for groupID := 0; groupID < groupScalar; groupID++ {
+		count += len(p.sampleGroups[groupID].commits)
+	}
+	return count
 }
 
 func normalizeLinker(linker string) string {
@@ -1395,8 +1473,10 @@ func normalizeLinker(linker string) string {
 		return linkerSigma
 	case linkerQANIZK, "qa", "qanizk":
 		return linkerQANIZK
+	case linkerQABatch, "qabatch", "qa_rlc", "qarlc":
+		return linkerQABatch
 	default:
-		log.Fatalf("unsupported linker %q; use %q or %q", linker, linkerSigma, linkerQANIZK)
+		log.Fatalf("unsupported linker %q; use %q, %q, or %q", linker, linkerSigma, linkerQANIZK, linkerQABatch)
 	}
 	return linkerSigma
 }
@@ -1411,4 +1491,20 @@ func normalizeMerkle(merkle string) string {
 		log.Fatalf("unsupported merkle opening %q; use %q or %q", merkle, merkleSingle, merkleMulti)
 	}
 	return merkleSingle
+}
+
+func appendMerkleOpeningContext(context []fr.Element, leafIdx int, meta crypto.MerkleLeafMeta) []fr.Element {
+	return append(
+		context,
+		uint64Element(uint64(leafIdx)),
+		uint64Element(meta.GroupID),
+		uint64Element(meta.ItemID),
+		uint64Element(meta.Index),
+	)
+}
+
+func uint64Element(value uint64) fr.Element {
+	var out fr.Element
+	out.SetUint64(value)
+	return out
 }

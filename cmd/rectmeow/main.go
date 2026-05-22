@@ -411,7 +411,7 @@ func runExperiment(logRows, logInner, logCols int, rhoStr string, L int, onlyCom
 	var buf bytes.Buffer
 	circuitProof.WriteTo(&buf)
 	groth16ProofSize := buf.Len()
-	merkleProofSize := (2*L*depthIn + 3*L*depthOut) * 32
+	merkleProofSize := (2*L*depthIn+3*L*depthOut)*crypto.MerkleHashSizeBytes + 5*L*crypto.G1AffineSizeBytes
 	cpLinkProofSize := crypto.AmComEqProofSizeBytes(aLinkProof) +
 		crypto.AmComEqProofSizeBytes(bLinkProof) +
 		crypto.AmComEqProofSizeBytes(cLinkProof) +

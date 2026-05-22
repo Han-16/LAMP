@@ -18,6 +18,7 @@ usage() {
 	echo "examples:" >&2
 	echo "  scripts/run_bench.sh meow --K 10 --L 128" >&2
 	echo "  scripts/run_bench.sh meow --K 10 --L 128 --linker qa_nizk --merkle multi" >&2
+	echo "  scripts/run_bench.sh meow --K 10 --L 128 --linker qa_batch --merkle multi" >&2
 	echo "  scripts/run_bench.sh freivalds --K 10 --compile" >&2
 	echo "  scripts/run_bench.sh rectmeow --rows 3 --inner 4 --cols 2 --L 2" >&2
 	echo "  scripts/run_bench.sh all --range --compile" >&2
