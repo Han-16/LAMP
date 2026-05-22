@@ -1,14 +1,22 @@
 package crypto
 
 import (
+	"sort"
+
 	"github.com/consensys/gnark-crypto/ecc/bn254"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 )
+
+const MerkleHashSizeBytes = 32
 
 type MerkleLeafMeta struct {
 	GroupID uint64
 	ItemID  uint64
 	Index   uint64
+}
+
+type MerkleMultiProof struct {
+	Siblings []fr.Element
 }
 
 func buildBaseMerkleTree(leaves []fr.Element, depth int) ([][]fr.Element, fr.Element) {
@@ -70,6 +78,135 @@ func GetMerkleProof(tree [][]fr.Element, idx, depth int) []fr.Element {
 		currIdx /= 2
 	}
 	return proof
+}
+
+func GetMerkleMultiProof(tree [][]fr.Element, indices []int, depth int) MerkleMultiProof {
+	current := uniqueSortedIndices(indices)
+	siblings := make([]fr.Element, 0)
+
+	for level := 0; level < depth; level++ {
+		known := make(map[int]struct{}, len(current))
+		for _, idx := range current {
+			known[idx] = struct{}{}
+		}
+
+		nextMap := make(map[int]struct{}, len(current))
+		for _, idx := range current {
+			siblingIdx := idx ^ 1
+			if _, ok := known[siblingIdx]; !ok {
+				siblings = append(siblings, tree[level][siblingIdx])
+			}
+			nextMap[idx/2] = struct{}{}
+		}
+		current = sortedKeys(nextMap)
+	}
+
+	return MerkleMultiProof{Siblings: siblings}
+}
+
+func VerifyMerkleMultiProof(root fr.Element, leafHashes []fr.Element, indices []int, proof MerkleMultiProof, depth int) bool {
+	if len(leafHashes) != len(indices) || len(leafHashes) == 0 {
+		return false
+	}
+
+	current := make(map[int]fr.Element, len(indices))
+	leafCount := 1 << depth
+	for i, idx := range indices {
+		if idx < 0 || idx >= leafCount {
+			return false
+		}
+		if existing, ok := current[idx]; ok {
+			if !existing.Equal(&leafHashes[i]) {
+				return false
+			}
+			continue
+		}
+		current[idx] = leafHashes[i]
+	}
+
+	proofPos := 0
+	for level := 0; level < depth; level++ {
+		keys := sortedKeysFromHashes(current)
+		next := make(map[int]fr.Element, len(keys))
+		processed := make(map[int]struct{}, len(keys))
+
+		for _, idx := range keys {
+			if _, ok := processed[idx]; ok {
+				continue
+			}
+
+			currHash := current[idx]
+			siblingIdx := idx ^ 1
+			var siblingHash fr.Element
+			if knownSibling, ok := current[siblingIdx]; ok {
+				siblingHash = knownSibling
+				processed[siblingIdx] = struct{}{}
+			} else {
+				if proofPos >= len(proof.Siblings) {
+					return false
+				}
+				siblingHash = proof.Siblings[proofPos]
+				proofPos++
+			}
+			processed[idx] = struct{}{}
+
+			var parent fr.Element
+			if idx%2 == 0 {
+				parent = HashElements(currHash, siblingHash)
+			} else {
+				parent = HashElements(siblingHash, currHash)
+			}
+
+			parentIdx := idx / 2
+			if existing, ok := next[parentIdx]; ok {
+				if !existing.Equal(&parent) {
+					return false
+				}
+			} else {
+				next[parentIdx] = parent
+			}
+		}
+		current = next
+	}
+
+	if proofPos != len(proof.Siblings) || len(current) != 1 {
+		return false
+	}
+	computedRoot, ok := current[0]
+	return ok && computedRoot.Equal(&root)
+}
+
+func MerkleMultiProofSizeBytes(proof MerkleMultiProof) int {
+	return len(proof.Siblings) * MerkleHashSizeBytes
+}
+
+func uniqueSortedIndices(indices []int) []int {
+	if len(indices) == 0 {
+		return nil
+	}
+	seen := make(map[int]struct{}, len(indices))
+	for _, idx := range indices {
+		seen[idx] = struct{}{}
+	}
+	return sortedKeys(seen)
+}
+
+func sortedKeys(values map[int]struct{}) []int {
+	keys := make([]int, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Ints(keys)
+	return keys
+}
+
+func sortedKeysFromHashes(values map[int]fr.Element) []int {
+	keys := make([]int, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Ints(keys)
+	return keys
 }
 
 func nextPowerOfTwo(v int) int {

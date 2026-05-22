@@ -7,6 +7,7 @@ import (
 	"log"
 	"math"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -31,6 +32,11 @@ const (
 	linkerQANIZK = "qa_nizk"
 )
 
+const (
+	merkleSingle = "single"
+	merkleMulti  = "multi"
+)
+
 func main() {
 	if err := config.LoadDotEnv(); err != nil {
 		log.Fatalf("failed to load .env: %v", err)
@@ -40,6 +46,7 @@ func main() {
 	rhoFlag := flag.String("rho", config.GetString("MEOW_RHO", "1/2"), "Code rate")
 	LFlag := flag.Int("L", config.GetInt("MEOW_L", 128), "Number of unique indices L")
 	linkerFlag := flag.String("linker", config.GetString("MEOW_LINKER", linkerSigma), "CP-link backend: sigma or qa_nizk")
+	merkleFlag := flag.String("merkle", config.GetString("MEOW_MERKLE", merkleSingle), "Merkle opening backend: single or multi")
 	allFlag := flag.Bool("all", config.GetBool("MEOW_ALL", false), "Run benchmark range")
 	fromFlag := flag.Int("from", config.GetInt("MEOW_LOG_K_FROM", 7), "First logK when -all is enabled")
 	toFlag := flag.Int("to", config.GetInt("MEOW_LOG_K_TO", 20), "Last logK when -all is enabled")
@@ -67,18 +74,19 @@ func main() {
 		}
 
 		for logK := *fromFlag; logK <= *toFlag; logK++ {
-			res := runExperiment(logK, *rhoFlag, *LFlag, *linkerFlag, onlyCompile)
+			res := runExperiment(logK, *rhoFlag, *LFlag, *linkerFlag, *merkleFlag, onlyCompile)
 			benchmark.AppendMeowResultToCSV(writer, res)
 		}
 	} else {
-		res := runExperiment(*logKFlag, *rhoFlag, *LFlag, *linkerFlag, onlyCompile)
+		res := runExperiment(*logKFlag, *rhoFlag, *LFlag, *linkerFlag, *merkleFlag, onlyCompile)
 		benchmark.AppendMeowResultToCSV(writer, res)
 	}
 	fmt.Println("🎉 All Meow ZK tasks finished!")
 }
 
-func runExperiment(logK int, rhoStr string, L int, linker string, onlyCompile bool) benchmark.MeowResult {
+func runExperiment(logK int, rhoStr string, L int, linker string, merkle string, onlyCompile bool) benchmark.MeowResult {
 	linker = normalizeLinker(linker)
+	merkle = normalizeMerkle(merkle)
 	K := 1 << logK
 	N := K << 1
 	if rhoStr == "1/4" {
@@ -87,7 +95,7 @@ func runExperiment(logK int, rhoStr string, L int, linker string, onlyCompile bo
 	depth := int(math.Log2(float64(N)))
 	field := ecc.BN254.ScalarField()
 
-	fmt.Printf("🔥 [Meow ZK Protocol] logK=%d, K=%d, N=%d, L=%d, linker=%s\n", logK, K, N, L, linker)
+	fmt.Printf("🔥 [Meow ZK Protocol] logK=%d, K=%d, N=%d, L=%d, linker=%s, merkle=%s\n", logK, K, N, L, linker, merkle)
 
 	if onlyCompile {
 		fmt.Println("=== 🔍 Compiling Circuit for Constraints ===")
@@ -128,6 +136,7 @@ func runExperiment(logK int, rhoStr string, L int, linker string, onlyCompile bo
 			LogK:        logK,
 			Rho:         rhoStr,
 			Linker:      linker,
+			Merkle:      merkle,
 			N:           N,
 			NumQueries:  L,
 			Constraints: nbConstraints,
@@ -357,19 +366,40 @@ func runExperiment(logK int, rhoStr string, L int, linker string, onlyCompile bo
 	// =========================================================================
 	fmt.Println("=== Generating Off-line Proofs ===")
 
-	mpA := make([][]fr.Element, L)
-	mpB := make([][]fr.Element, L)
-	mpC := make([][]fr.Element, L)
-	mpX := make([][]fr.Element, L)
-	mpYZ := make([][]fr.Element, L)
+	var mpA [][]fr.Element
+	var mpB [][]fr.Element
+	var mpC [][]fr.Element
+	var mpX [][]fr.Element
+	var mpYZ [][]fr.Element
+	var mmpA crypto.MerkleMultiProof
+	var mmpB crypto.MerkleMultiProof
+	var mmpC crypto.MerkleMultiProof
+	var mmpX crypto.MerkleMultiProof
+	var mmpYZ crypto.MerkleMultiProof
 
 	startMerkleProve := time.Now()
-	for i, idx := range indices {
-		mpA[i] = proverWithPK.GenerateMembershipProof(treeA, idx, depth)
-		mpB[i] = proverWithPK.GenerateMembershipProof(treeB, idx, depth)
-		mpC[i] = proverWithPK.GenerateMembershipProof(treeC, idx, depth)
-		mpX[i] = proverWithPK.GenerateMembershipProof(treeX, idx, depth)
-		mpYZ[i] = proverWithPK.GenerateMembershipProof(treeYZ, idx, depth)
+	switch merkle {
+	case merkleSingle:
+		mpA = make([][]fr.Element, L)
+		mpB = make([][]fr.Element, L)
+		mpC = make([][]fr.Element, L)
+		mpX = make([][]fr.Element, L)
+		mpYZ = make([][]fr.Element, L)
+		for i, idx := range indices {
+			mpA[i] = proverWithPK.GenerateMembershipProof(treeA, idx, depth)
+			mpB[i] = proverWithPK.GenerateMembershipProof(treeB, idx, depth)
+			mpC[i] = proverWithPK.GenerateMembershipProof(treeC, idx, depth)
+			mpX[i] = proverWithPK.GenerateMembershipProof(treeX, idx, depth)
+			mpYZ[i] = proverWithPK.GenerateMembershipProof(treeYZ, idx, depth)
+		}
+	case merkleMulti:
+		mmpA = crypto.GetMerkleMultiProof(treeA, indices, depth)
+		mmpB = crypto.GetMerkleMultiProof(treeB, indices, depth)
+		mmpC = crypto.GetMerkleMultiProof(treeC, indices, depth)
+		mmpX = crypto.GetMerkleMultiProof(treeX, indices, depth)
+		mmpYZ = crypto.GetMerkleMultiProof(treeYZ, indices, depth)
+	default:
+		log.Fatalf("unsupported merkle opening %q", merkle)
 	}
 	merkleProveTime := time.Since(startMerkleProve).Seconds()
 
@@ -495,25 +525,46 @@ func runExperiment(logK int, rhoStr string, L int, linker string, onlyCompile bo
 	var merkleVerifyTime float64
 	var cpLinkVerifyTime float64
 
-	for i, idx := range indices {
-		startMerkle := time.Now()
-		if !verifier.VerifyMembership(cmA, leavesA[idx], mpA[i], idx, depth) {
-			log.Fatal("❌ Merkle A Failed")
+	startMerkleVerify := time.Now()
+	switch merkle {
+	case merkleSingle:
+		for i, idx := range indices {
+			if !verifier.VerifyMembership(cmA, leavesA[idx], mpA[i], idx, depth) {
+				log.Fatal("❌ Merkle A Failed")
+			}
+			if !verifier.VerifyMembership(cmB, leavesB[idx], mpB[i], idx, depth) {
+				log.Fatal("❌ Merkle B Failed")
+			}
+			if !verifier.VerifyMembership(cmC, leavesC[idx], mpC[i], idx, depth) {
+				log.Fatal("❌ Merkle C Failed")
+			}
+			if !verifier.VerifyMembership(cmX, leavesX[idx], mpX[i], idx, depth) {
+				log.Fatal("❌ Merkle X Failed")
+			}
+			if !verifier.VerifyMembership(cmYZ, leavesYZ[idx], mpYZ[i], idx, depth) {
+				log.Fatal("❌ Merkle YZ Failed")
+			}
 		}
-		if !verifier.VerifyMembership(cmB, leavesB[idx], mpB[i], idx, depth) {
-			log.Fatal("❌ Merkle B Failed")
+	case merkleMulti:
+		if !verifier.VerifyMultiMembership(cmA, selectCommitments(leavesA, indices), indices, mmpA, depth) {
+			log.Fatal("❌ Merkle A multiproof failed")
 		}
-		if !verifier.VerifyMembership(cmC, leavesC[idx], mpC[i], idx, depth) {
-			log.Fatal("❌ Merkle C Failed")
+		if !verifier.VerifyMultiMembership(cmB, selectCommitments(leavesB, indices), indices, mmpB, depth) {
+			log.Fatal("❌ Merkle B multiproof failed")
 		}
-		if !verifier.VerifyMembership(cmX, leavesX[idx], mpX[i], idx, depth) {
-			log.Fatal("❌ Merkle X Failed")
+		if !verifier.VerifyMultiMembership(cmC, selectCommitments(leavesC, indices), indices, mmpC, depth) {
+			log.Fatal("❌ Merkle C multiproof failed")
 		}
-		if !verifier.VerifyMembership(cmYZ, leavesYZ[idx], mpYZ[i], idx, depth) {
-			log.Fatal("❌ Merkle YZ Failed")
+		if !verifier.VerifyMultiMembership(cmX, selectCommitments(leavesX, indices), indices, mmpX, depth) {
+			log.Fatal("❌ Merkle X multiproof failed")
 		}
-		merkleVerifyTime += time.Since(startMerkle).Seconds()
+		if !verifier.VerifyMultiMembership(cmYZ, selectCommitments(leavesYZ, indices), indices, mmpYZ, depth) {
+			log.Fatal("❌ Merkle YZ multiproof failed")
+		}
+	default:
+		log.Fatalf("unsupported merkle opening %q", merkle)
 	}
+	merkleVerifyTime = time.Since(startMerkleVerify).Seconds()
 
 	startCpLink := time.Now()
 	switch linker {
@@ -546,7 +597,17 @@ func runExperiment(logK int, rhoStr string, L int, linker string, onlyCompile bo
 	circuitProof.WriteTo(&buf)
 	groth16ProofSize := buf.Len()
 
-	merkleProofSize := L * 5 * depth * 32
+	merkleProofSize := 0
+	switch merkle {
+	case merkleSingle:
+		merkleProofSize = L * 5 * depth * crypto.MerkleHashSizeBytes
+	case merkleMulti:
+		merkleProofSize = crypto.MerkleMultiProofSizeBytes(mmpA) +
+			crypto.MerkleMultiProofSizeBytes(mmpB) +
+			crypto.MerkleMultiProofSizeBytes(mmpC) +
+			crypto.MerkleMultiProofSizeBytes(mmpX) +
+			crypto.MerkleMultiProofSizeBytes(mmpYZ)
+	}
 
 	cpLinkProofSize := 0
 	switch linker {
@@ -565,6 +626,7 @@ func runExperiment(logK int, rhoStr string, L int, linker string, onlyCompile bo
 		LogK:              logK,
 		Rho:               rhoStr,
 		Linker:            linker,
+		Merkle:            merkle,
 		N:                 N,
 		NumQueries:        L,
 		Constraints:       nbConstraints,
@@ -591,7 +653,7 @@ func runExperiment(logK int, rhoStr string, L int, linker string, onlyCompile bo
 }
 
 func normalizeLinker(linker string) string {
-	switch linker {
+	switch strings.ToLower(strings.TrimSpace(linker)) {
 	case "", linkerSigma:
 		return linkerSigma
 	case linkerQANIZK, "qa", "qanizk":
@@ -600,4 +662,24 @@ func normalizeLinker(linker string) string {
 		log.Fatalf("unsupported linker %q; use %q or %q", linker, linkerSigma, linkerQANIZK)
 	}
 	return linkerSigma
+}
+
+func normalizeMerkle(merkle string) string {
+	switch strings.ToLower(strings.TrimSpace(merkle)) {
+	case "", merkleSingle:
+		return merkleSingle
+	case merkleMulti:
+		return merkleMulti
+	default:
+		log.Fatalf("unsupported merkle opening %q; use %q or %q", merkle, merkleSingle, merkleMulti)
+	}
+	return merkleSingle
+}
+
+func selectCommitments(leaves []bn254.G1Affine, indices []int) []bn254.G1Affine {
+	out := make([]bn254.G1Affine, len(indices))
+	for i, idx := range indices {
+		out[i] = leaves[idx]
+	}
+	return out
 }

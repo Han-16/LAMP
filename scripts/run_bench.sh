@@ -17,7 +17,7 @@ usage() {
 	echo "" >&2
 	echo "examples:" >&2
 	echo "  scripts/run_bench.sh meow --K 10 --L 128" >&2
-	echo "  scripts/run_bench.sh meow --K 10 --L 128 --linker qa_nizk" >&2
+	echo "  scripts/run_bench.sh meow --K 10 --L 128 --linker qa_nizk --merkle multi" >&2
 	echo "  scripts/run_bench.sh freivalds --K 10 --compile" >&2
 	echo "  scripts/run_bench.sh rectmeow --rows 3 --inner 4 --cols 2 --L 2" >&2
 	echo "  scripts/run_bench.sh all --range --compile" >&2
@@ -61,7 +61,7 @@ docker build -t "$image" .
 env_args="--env-file .env"
 
 for key in \
-	MEOW_LOG_K MEOW_RHO MEOW_L MEOW_LINKER MEOW_ALL MEOW_ONLY_COMPILE MEOW_OUTPUT_DIR MEOW_LOG_K_FROM MEOW_LOG_K_TO \
+	MEOW_LOG_K MEOW_RHO MEOW_L MEOW_LINKER MEOW_MERKLE MEOW_ALL MEOW_ONLY_COMPILE MEOW_OUTPUT_DIR MEOW_LOG_K_FROM MEOW_LOG_K_TO \
 	FREIVALDS_LOG_K FREIVALDS_ALL FREIVALDS_ONLY_COMPILE FREIVALDS_OUTPUT_DIR FREIVALDS_LOG_K_FROM FREIVALDS_LOG_K_TO \
 	RECTMEOW_ROWS RECTMEOW_INNER RECTMEOW_COLS RECTMEOW_RHO RECTMEOW_L RECTMEOW_ONLY_COMPILE RECTMEOW_OUTPUT_DIR
 do

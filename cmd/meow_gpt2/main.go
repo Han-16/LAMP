@@ -43,6 +43,11 @@ const (
 )
 
 const (
+	merkleSingle = "single"
+	merkleMulti  = "multi"
+)
+
+const (
 	groupS = iota
 	groupD
 	groupDh
@@ -90,6 +95,7 @@ type sampleGroup struct {
 	metas         []crypto.MerkleLeafMeta
 	leafIndices   []int
 	proofs        [][]fr.Element
+	multiProof    crypto.MerkleMultiProof
 	cache         map[string]int
 	merkleProofSz int
 }
@@ -137,6 +143,7 @@ type preparedLayer struct {
 	seqLen int
 	rho    string
 	L      int
+	merkle string
 
 	extGroups    [numGroups]*extGroup
 	sampleGroups [numGroups]*sampleGroup
@@ -153,14 +160,15 @@ type preparedLayer struct {
 	equalityChecks  []circuit.MeowGPT2EntryEqualityCheck
 	transposeChecks []circuit.MeowGPT2TransposeCheck
 
-	scalars         []fr.Element
-	scalarBlocks    [][]fr.Element
-	scalarCommits   []bn254.G1Affine
-	scalarBlindings []fr.Element
-	scalarMetas     []crypto.MerkleLeafMeta
-	scalarLeafIdx   []int
-	scalarProofs    [][]fr.Element
-	scalarCache     map[string]int
+	scalars          []fr.Element
+	scalarBlocks     [][]fr.Element
+	scalarCommits    []bn254.G1Affine
+	scalarBlindings  []fr.Element
+	scalarMetas      []crypto.MerkleLeafMeta
+	scalarLeafIdx    []int
+	scalarProofs     [][]fr.Element
+	scalarMultiProof crypto.MerkleMultiProof
+	scalarCache      map[string]int
 
 	matrixComputeTime float64
 	setupTime         float64
@@ -177,6 +185,7 @@ func main() {
 	rhoFlag := flag.String("rho", config.GetString("MEOW_GPT2_RHO", "1/2"), "Code rate, 1/2 or 1/4")
 	LFlag := flag.Int("L", config.GetInt("MEOW_GPT2_L", 1), "Number of sampled queries per matmul and wiring check")
 	linkerFlag := flag.String("linker", config.GetString("MEOW_GPT2_LINKER", linkerSigma), "CP-link backend: sigma or qa_nizk")
+	merkleFlag := flag.String("merkle", config.GetString("MEOW_GPT2_MERKLE", merkleSingle), "Merkle opening backend: single or multi")
 	allFlag := flag.Bool("all", config.GetBool("MEOW_GPT2_ALL", false), "Run benchmark range")
 	rangeFlag := flag.Bool("range", false, "Alias for -all")
 	fromFlag := flag.Int("from", config.GetInt("MEOW_GPT2_SEQ_FROM", 0), "First log2 sequence length when range mode is enabled")
@@ -196,32 +205,33 @@ func main() {
 		if *fromFlag > *toFlag {
 			log.Fatalf("invalid seq range: from=%d, to=%d", *fromFlag, *toFlag)
 		}
-		fmt.Printf("Running Meow GPT-2 range: seq=%d..%d, rho=%s, L=%d, linker=%s\n", *fromFlag, *toFlag, *rhoFlag, *LFlag, normalizeLinker(*linkerFlag))
+		fmt.Printf("Running Meow GPT-2 range: seq=%d..%d, rho=%s, L=%d, linker=%s, merkle=%s\n", *fromFlag, *toFlag, *rhoFlag, *LFlag, normalizeLinker(*linkerFlag), normalizeMerkle(*merkleFlag))
 		for seqLog := *fromFlag; seqLog <= *toFlag; seqLog++ {
-			res := runExperiment(seqLog, *rhoFlag, *LFlag, *linkerFlag, *compileFlag)
+			res := runExperiment(seqLog, *rhoFlag, *LFlag, *linkerFlag, *merkleFlag, *compileFlag)
 			benchmark.AppendMeowGPT2ResultToCSV(writer, res)
 			fmt.Println("----------------------------------------------------------------")
 		}
 		return
 	}
 
-	res := runExperiment(*seqFlag, *rhoFlag, *LFlag, *linkerFlag, *compileFlag)
+	res := runExperiment(*seqFlag, *rhoFlag, *LFlag, *linkerFlag, *merkleFlag, *compileFlag)
 	benchmark.AppendMeowGPT2ResultToCSV(writer, res)
 }
 
-func runExperiment(seqLog int, rho string, L int, linker string, onlyCompile bool) benchmark.MeowGPT2Result {
+func runExperiment(seqLog int, rho string, L int, linker string, merkle string, onlyCompile bool) benchmark.MeowGPT2Result {
 	linker = normalizeLinker(linker)
+	merkle = normalizeMerkle(merkle)
 	if seqLog < 0 || L <= 0 {
 		log.Fatalf("invalid parameters: seq=%d L=%d", seqLog, L)
 	}
 	seqLen := 1 << seqLog
-	fmt.Printf("Meow GPT-2 medium packed-QKV layer: seq=2^%d=%d, rho=%s, L=%d, linker=%s\n", seqLog, seqLen, rho, L, linker)
+	fmt.Printf("Meow GPT-2 medium packed-QKV layer: seq=2^%d=%d, rho=%s, L=%d, linker=%s, merkle=%s\n", seqLog, seqLen, rho, L, linker, merkle)
 
 	var prep *preparedLayer
 	if onlyCompile {
-		prep = prepareLayerShapeOnly(seqLog, rho, L)
+		prep = prepareLayerShapeOnly(seqLog, rho, L, merkle)
 	} else {
-		prep = prepareLayer(seqLog, rho, L)
+		prep = prepareLayer(seqLog, rho, L, merkle)
 		fmt.Printf("   ✅ Matrix Compute Time: %.2f s\n", prep.matrixComputeTime)
 	}
 	emptyCircuit := buildCircuit(prep, false)
@@ -240,6 +250,7 @@ func runExperiment(seqLog int, rho string, L int, linker string, onlyCompile boo
 			SeqLen:            seqLen,
 			Rho:               rho,
 			Linker:            linker,
+			Merkle:            merkle,
 			NumQueries:        L,
 			NumClaims:         len(prep.claims),
 			NumCommitGroups:   numGroups,
@@ -397,6 +408,7 @@ func runExperiment(seqLog int, rho string, L int, linker string, onlyCompile boo
 		SeqLen:            seqLen,
 		Rho:               rho,
 		Linker:            linker,
+		Merkle:            merkle,
 		NumQueries:        L,
 		NumClaims:         len(prep.claims),
 		NumCommitGroups:   numGroups,
@@ -422,13 +434,14 @@ func runExperiment(seqLog int, rho string, L int, linker string, onlyCompile boo
 	}
 }
 
-func prepareLayer(seqLog int, rho string, L int) *preparedLayer {
+func prepareLayer(seqLog int, rho string, L int, merkle string) *preparedLayer {
 	seqLen := 1 << seqLog
 	p := &preparedLayer{
 		seqLog:      seqLog,
 		seqLen:      seqLen,
 		rho:         rho,
 		L:           L,
+		merkle:      merkle,
 		domainCache: make(map[domainCacheKey]domains),
 		scalarCache: make(map[string]int),
 	}
@@ -462,6 +475,9 @@ func prepareLayer(seqLog int, rho string, L int) *preparedLayer {
 	}
 	p.addClaimSamples()
 	p.addPackedAttentionChecks(tensors, L)
+	if p.merkle == merkleMulti {
+		p.generateMerkleMultiProofs()
+	}
 	p.commitTime = time.Since(startCommit).Seconds() - p.merkleProveTime
 	if p.commitTime < 0 {
 		p.commitTime = 0
@@ -470,13 +486,14 @@ func prepareLayer(seqLog int, rho string, L int) *preparedLayer {
 	return p
 }
 
-func prepareLayerShapeOnly(seqLog int, rho string, L int) *preparedLayer {
+func prepareLayerShapeOnly(seqLog int, rho string, L int, merkle string) *preparedLayer {
 	seqLen := 1 << seqLog
 	p := &preparedLayer{
 		seqLog:      seqLog,
 		seqLen:      seqLen,
 		rho:         rho,
 		L:           L,
+		merkle:      merkle,
 		domainCache: make(map[domainCacheKey]domains),
 		scalarCache: make(map[string]int),
 	}
@@ -888,8 +905,10 @@ func (p *preparedLayer) addTensorSample(t *tensor, col int) int {
 	sg.blindings = append(sg.blindings, ext.blindings[leafIdx])
 	sg.metas = append(sg.metas, ext.metas[leafIdx])
 	sg.leafIndices = append(sg.leafIndices, leafIdx)
-	sg.proofs = append(sg.proofs, p.generateMerkleProof(ext, leafIdx))
-	sg.merkleProofSz += ext.depth * 32
+	if p.merkle == merkleSingle {
+		sg.proofs = append(sg.proofs, p.generateMerkleProof(ext, leafIdx))
+		sg.merkleProofSz += ext.depth * crypto.MerkleHashSizeBytes
+	}
 	return idx
 }
 
@@ -914,7 +933,9 @@ func (p *preparedLayer) addScalarSample(f *foldedCodeword, col int) int {
 	p.scalarBlindings = append(p.scalarBlindings, ext.blindings[leafIdx])
 	p.scalarMetas = append(p.scalarMetas, ext.metas[leafIdx])
 	p.scalarLeafIdx = append(p.scalarLeafIdx, leafIdx)
-	p.scalarProofs = append(p.scalarProofs, p.generateMerkleProof(ext, leafIdx))
+	if p.merkle == merkleSingle {
+		p.scalarProofs = append(p.scalarProofs, p.generateMerkleProof(ext, leafIdx))
+	}
 	return idx
 }
 
@@ -923,6 +944,23 @@ func (p *preparedLayer) generateMerkleProof(ext *extGroup, leafIdx int) []fr.Ele
 	proof := crypto.GetMerkleProof(ext.tree, leafIdx, ext.depth)
 	p.merkleProveTime += time.Since(start).Seconds()
 	return proof
+}
+
+func (p *preparedLayer) generateMerkleMultiProofs() {
+	start := time.Now()
+	for groupID := 0; groupID < groupScalar; groupID++ {
+		sg := p.sampleGroups[groupID]
+		if len(sg.leafIndices) == 0 {
+			continue
+		}
+		ext := p.extGroups[groupID]
+		sg.multiProof = crypto.GetMerkleMultiProof(ext.tree, sg.leafIndices, ext.depth)
+	}
+	if len(p.scalarLeafIdx) > 0 {
+		ext := p.extGroups[groupScalar]
+		p.scalarMultiProof = crypto.GetMerkleMultiProof(ext.tree, p.scalarLeafIdx, ext.depth)
+	}
+	p.merkleProveTime += time.Since(start).Seconds()
 }
 
 func (p *preparedLayer) addPackedAttentionChecks(tensors []*tensor, L int) {
@@ -1306,6 +1344,12 @@ func (p *preparedLayer) sampleCPLinkData(groupID int) ([][]fr.Element, []bn254.G
 func (p *preparedLayer) verifyMerkleGroup(verifier *protocol.Verifier, groupID int) bool {
 	ext := p.extGroups[groupID]
 	if groupID == groupScalar {
+		if len(p.scalarCommits) == 0 {
+			return true
+		}
+		if p.merkle == merkleMulti {
+			return verifier.VerifyMultiMembershipWithMeta(ext.root, p.scalarCommits, p.scalarMetas, p.scalarLeafIdx, p.scalarMultiProof, ext.depth)
+		}
 		for i := range p.scalarCommits {
 			if !verifier.VerifyMembershipWithMeta(ext.root, p.scalarCommits[i], p.scalarMetas[i], p.scalarProofs[i], p.scalarLeafIdx[i], ext.depth) {
 				return false
@@ -1314,6 +1358,12 @@ func (p *preparedLayer) verifyMerkleGroup(verifier *protocol.Verifier, groupID i
 		return true
 	}
 	sg := p.sampleGroups[groupID]
+	if len(sg.commits) == 0 {
+		return true
+	}
+	if p.merkle == merkleMulti {
+		return verifier.VerifyMultiMembershipWithMeta(ext.root, sg.commits, sg.metas, sg.leafIndices, sg.multiProof, ext.depth)
+	}
 	for i := range sg.commits {
 		if !verifier.VerifyMembershipWithMeta(ext.root, sg.commits[i], sg.metas[i], sg.proofs[i], sg.leafIndices[i], ext.depth) {
 			return false
@@ -1324,10 +1374,18 @@ func (p *preparedLayer) verifyMerkleGroup(verifier *protocol.Verifier, groupID i
 
 func (p *preparedLayer) merkleProofSize() int {
 	size := 0
-	for groupID := 0; groupID < groupScalar; groupID++ {
-		size += p.sampleGroups[groupID].merkleProofSz
+	switch p.merkle {
+	case merkleSingle:
+		for groupID := 0; groupID < groupScalar; groupID++ {
+			size += p.sampleGroups[groupID].merkleProofSz
+		}
+		size += len(p.scalarProofs) * p.extGroups[groupScalar].depth * crypto.MerkleHashSizeBytes
+	case merkleMulti:
+		for groupID := 0; groupID < groupScalar; groupID++ {
+			size += crypto.MerkleMultiProofSizeBytes(p.sampleGroups[groupID].multiProof)
+		}
+		size += crypto.MerkleMultiProofSizeBytes(p.scalarMultiProof)
 	}
-	size += len(p.scalarProofs) * p.extGroups[groupScalar].depth * 32
 	return size
 }
 
@@ -1341,4 +1399,16 @@ func normalizeLinker(linker string) string {
 		log.Fatalf("unsupported linker %q; use %q or %q", linker, linkerSigma, linkerQANIZK)
 	}
 	return linkerSigma
+}
+
+func normalizeMerkle(merkle string) string {
+	switch strings.ToLower(strings.TrimSpace(merkle)) {
+	case "", merkleSingle:
+		return merkleSingle
+	case merkleMulti:
+		return merkleMulti
+	default:
+		log.Fatalf("unsupported merkle opening %q; use %q or %q", merkle, merkleSingle, merkleMulti)
+	}
+	return merkleSingle
 }

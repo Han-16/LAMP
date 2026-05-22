@@ -50,6 +50,25 @@ func (v *Verifier) VerifyMembershipWithMeta(root fr.Element, commitment bn254.G1
 	return currHash.Equal(&root)
 }
 
+func (v *Verifier) VerifyMultiMembership(root fr.Element, commitments []bn254.G1Affine, indices []int, proof crypto.MerkleMultiProof, depth int) bool {
+	leafHashes := make([]fr.Element, len(commitments))
+	for i := range commitments {
+		leafHashes[i] = crypto.HashPoint(commitments[i])
+	}
+	return crypto.VerifyMerkleMultiProof(root, leafHashes, indices, proof, depth)
+}
+
+func (v *Verifier) VerifyMultiMembershipWithMeta(root fr.Element, commitments []bn254.G1Affine, metas []crypto.MerkleLeafMeta, indices []int, proof crypto.MerkleMultiProof, depth int) bool {
+	if len(commitments) != len(metas) {
+		return false
+	}
+	leafHashes := make([]fr.Element, len(commitments))
+	for i := range commitments {
+		leafHashes[i] = crypto.HashPointWithMeta(commitments[i], metas[i])
+	}
+	return crypto.VerifyMerkleMultiProof(root, leafHashes, indices, proof, depth)
+}
+
 func (v *Verifier) VerifyGroth16(proof groth16.Proof, publicWitness witness.Witness) error {
 	return groth16.Verify(proof, v.VK, publicWitness)
 }
