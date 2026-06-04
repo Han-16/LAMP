@@ -149,7 +149,6 @@ func runExperiment(logK int, rhoStr string, L int, merkle string, onlyCompile bo
 	ckABC := crypto.SetupCommitKey(3 * K)
 	ckXYZ := crypto.SetupCommitKey(2)
 	encoder := crypto.NewEncoder(K, N)
-	prover := protocol.NewProver(nil, ckABC, encoder)
 	protocolSetupTime += time.Since(startProtocolSetup).Seconds()
 
 	// =========================================================================
@@ -167,8 +166,8 @@ func runExperiment(logK int, rhoStr string, L int, merkle string, onlyCompile bo
 	// =========================================================================
 	startMatCommit := time.Now()
 
-	var encA, encB, encC [][]fr.Element
 	var colsEncA, colsEncB, colsEncC [][]fr.Element
+	var errA, errB, errC error
 	var treeABC [][]fr.Element
 	var rootABC fr.Element
 	var leavesABC []bn254.G1Affine
@@ -180,28 +179,27 @@ func runExperiment(logK int, rhoStr string, L int, merkle string, onlyCompile bo
 	// Matrix A
 	go func() {
 		defer wg.Done()
-		_, encA, _ = prover.EncodeMatrix(matA)
-		colsEncA = matrix.Transpose(encA, K, N)
+		colsEncA, errA = encoder.EncodeRowsToColumns(matA)
 	}()
 
 	// Matrix B
 	go func() {
 		defer wg.Done()
-		_, encB, _ = prover.EncodeMatrix(matB)
-		colsEncB = matrix.Transpose(encB, K, N)
+		colsEncB, errB = encoder.EncodeRowsToColumns(matB)
 	}()
 
 	// Matrix C
 	go func() {
 		defer wg.Done()
-		_, encC, _ = prover.EncodeMatrix(matC)
-		colsEncC = matrix.Transpose(encC, K, N)
+		colsEncC, errC = encoder.EncodeRowsToColumns(matC)
 	}()
 
 	wg.Wait()
+	if errA != nil || errB != nil || errC != nil {
+		log.Fatalf("❌ Matrix encoding failed: A=%v B=%v C=%v", errA, errB, errC)
+	}
 
-	colsEncABC := combineABCColumns(colsEncA, colsEncB, colsEncC, K)
-	leavesABC, blABC = crypto.BatchPedersenCommitBlinded(colsEncABC, ckABC)
+	leavesABC, blABC = crypto.BatchPedersenCommitABCBlinded(colsEncA, colsEncB, colsEncC, ckABC)
 	treeABC, rootABC = crypto.BuildMerkleTreeFromGroupElements(leavesABC, depth)
 
 	CmABC := crypto.HashElementsMiMC(rootABC)
@@ -560,14 +558,6 @@ func selectCommitments(leaves []bn254.G1Affine, indices []int) []bn254.G1Affine 
 	out := make([]bn254.G1Affine, len(indices))
 	for i, idx := range indices {
 		out[i] = leaves[idx]
-	}
-	return out
-}
-
-func combineABCColumns(a, b, c [][]fr.Element, blockLen int) [][]fr.Element {
-	out := make([][]fr.Element, len(a))
-	for i := range a {
-		out[i] = combineABCColumn(a[i], b[i], c[i], blockLen)
 	}
 	return out
 }

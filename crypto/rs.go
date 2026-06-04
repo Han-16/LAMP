@@ -108,3 +108,22 @@ func (e *Encoder) EncodeRows(rows [][]fr.Element) ([][]fr.Element, [][]fr.Elemen
 
 	return coeffsMatrix, encodedMatrix, nil
 }
+
+func (e *Encoder) EncodeRowsToColumns(rows [][]fr.Element) ([][]fr.Element, error) {
+	cols := make([][]fr.Element, e.n)
+	for col := range cols {
+		cols[col] = make([]fr.Element, len(rows))
+	}
+
+	for rowIndex, row := range rows {
+		_, encRow, err := e.Encode(row)
+		if err != nil {
+			return nil, fmt.Errorf("failed to encode row %d: %w", rowIndex, err)
+		}
+		for col := 0; col < e.n; col++ {
+			cols[col][rowIndex] = encRow[col]
+		}
+	}
+
+	return cols, nil
+}
