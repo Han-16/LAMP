@@ -16,24 +16,21 @@ type MeowCircuit struct {
 	DomainN  []fr.Element
 	WeightsN []fr.Element
 
-	Roots      [5]frontend.Variable `gnark:",public"` // [0:3] for A, B, C & [3:5] for X, YZ
-	CmABC      frontend.Variable    `gnark:",public"`
-	CmXYZ      frontend.Variable    `gnark:",public"`
-	ChallengeR frontend.Variable    `gnark:",public"`
-	Indices    []frontend.Variable  `gnark:",public"`
-	RSPointX   frontend.Variable    `gnark:",public"`
-	RSPointYZ  frontend.Variable    `gnark:",public"`
+	RootABC    frontend.Variable   `gnark:",public"`
+	RootXYZ    frontend.Variable   `gnark:",public"`
+	CmABC      frontend.Variable   `gnark:",public"`
+	CmXYZ      frontend.Variable   `gnark:",public"`
+	ChallengeR frontend.Variable   `gnark:",public"`
+	Indices    []frontend.Variable `gnark:",public"`
+	RSPointX   frontend.Variable   `gnark:",public"`
+	RSPointYZ  frontend.Variable   `gnark:",public"`
 
-	ColsEncA [][]frontend.Variable // [L][K]
-	ColsEncB [][]frontend.Variable // [L][K]
-	ColsEncC [][]frontend.Variable // [L][K]
-	VecX     []frontend.Variable   // [K]
-	VecYZ    []frontend.Variable   // [K]
-	EncX     []frontend.Variable   // [N]
-	EncYZ    []frontend.Variable   // [N]
-
-	TargetEncX  []frontend.Variable // [L]
-	TargetEncYZ []frontend.Variable // [L]
+	ColsEncABC [][]frontend.Variable // [L][3K]
+	VecX       []frontend.Variable   // [K]
+	VecYZ      []frontend.Variable   // [K]
+	EncX       []frontend.Variable   // [N]
+	EncYZ      []frontend.Variable   // [N]
+	TargetXYZ  [][]frontend.Variable // [L][2]
 }
 
 func (c *MeowCircuit) Define(api frontend.API) error {
@@ -55,36 +52,42 @@ func (c *MeowCircuit) Define(api frontend.API) error {
 	}
 
 	// 1. Commit queried A/B/C columns and queried X/YZ scalar values as two grouped rounds.
-	if _, err := committer.Commit(FlattenRows(c.ColsEncA, c.ColsEncB, c.ColsEncC)...); err != nil {
+	if _, err := committer.Commit(FlattenRows(c.ColsEncABC)...); err != nil {
 		return err
 	}
-	if _, err := committer.Commit(AppendVariables(c.TargetEncX, c.TargetEncYZ)...); err != nil {
+	if _, err := committer.Commit(FlattenRows(c.TargetXYZ)...); err != nil {
 		return err
 	}
 
 	for i := 0; i < L; i++ {
+		colsEncA := c.ColsEncABC[i][:c.K]
+		colsEncB := c.ColsEncABC[i][c.K : 2*c.K]
+		colsEncC := c.ColsEncABC[i][2*c.K : 3*c.K]
+		targetEncX := c.TargetXYZ[i][0]
+		targetEncYZ := c.TargetXYZ[i][1]
+
 		exprEncX := tX.Lookup(c.Indices[i])[0]
 		exprEncYZ := tYZ.Lookup(c.Indices[i])[0]
 
-		api.AssertIsEqual(exprEncX, c.TargetEncX[i])
-		api.AssertIsEqual(exprEncYZ, c.TargetEncYZ[i])
+		api.AssertIsEqual(exprEncX, targetEncX)
+		api.AssertIsEqual(exprEncYZ, targetEncYZ)
 
-		foldA := Fold(api, challengeRPowers, c.ColsEncA[i]) // x = r * A
-		foldB := Fold(api, c.VecX, c.ColsEncB[i])           // y = x * B
-		foldC := Fold(api, challengeRPowers, c.ColsEncC[i]) // z = r * C
+		foldA := Fold(api, challengeRPowers, colsEncA) // x = r * A
+		foldB := Fold(api, c.VecX, colsEncB)           // y = x * B
+		foldC := Fold(api, challengeRPowers, colsEncC) // z = r * C
 
-		api.AssertIsEqual(foldA, c.TargetEncX[i])
-		api.AssertIsEqual(foldB, c.TargetEncYZ[i])
-		api.AssertIsEqual(foldC, c.TargetEncYZ[i])
+		api.AssertIsEqual(foldA, targetEncX)
+		api.AssertIsEqual(foldB, targetEncYZ)
+		api.AssertIsEqual(foldC, targetEncYZ)
 	}
 
 	// 2. Verify Hashes
 	h.Reset()
-	h.Write(c.Roots[0], c.Roots[1], c.Roots[2])
+	h.Write(c.RootABC)
 	api.AssertIsEqual(c.CmABC, h.Sum())
 
 	h.Reset()
-	h.Write(c.Roots[3], c.Roots[4])
+	h.Write(c.RootXYZ)
 	api.AssertIsEqual(c.CmXYZ, h.Sum())
 
 	// 3. Verify Reed-Solomon encoding for X, YZ at transcript-derived out-of-domain points.

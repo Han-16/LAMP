@@ -28,7 +28,6 @@ import (
 )
 
 const (
-	linkerQANIZK  = "qa_nizk"
 	linkerQABatch = "qa_batch"
 )
 
@@ -45,7 +44,6 @@ func main() {
 	logKFlag := flag.Int("K", config.GetInt("MEOW_LOG_K", 10), "Log base 2 of K")
 	rhoFlag := flag.String("rho", config.GetString("MEOW_RHO", "1/2"), "Code rate")
 	LFlag := flag.Int("L", config.GetInt("MEOW_L", 128), "Number of unique indices L")
-	linkerFlag := flag.String("linker", config.GetString("MEOW_LINKER", linkerQANIZK), "CP-link backend: qa_nizk or qa_batch")
 	merkleFlag := flag.String("merkle", config.GetString("MEOW_MERKLE", merkleSingle), "Merkle opening backend: single or multi")
 	allFlag := flag.Bool("all", config.GetBool("MEOW_ALL", false), "Run benchmark range")
 	fromFlag := flag.Int("from", config.GetInt("MEOW_LOG_K_FROM", 7), "First logK when -all is enabled")
@@ -74,18 +72,17 @@ func main() {
 		}
 
 		for logK := *fromFlag; logK <= *toFlag; logK++ {
-			res := runExperiment(logK, *rhoFlag, *LFlag, *linkerFlag, *merkleFlag, onlyCompile)
+			res := runExperiment(logK, *rhoFlag, *LFlag, *merkleFlag, onlyCompile)
 			benchmark.AppendMeowResultToCSV(writer, res)
 		}
 	} else {
-		res := runExperiment(*logKFlag, *rhoFlag, *LFlag, *linkerFlag, *merkleFlag, onlyCompile)
+		res := runExperiment(*logKFlag, *rhoFlag, *LFlag, *merkleFlag, onlyCompile)
 		benchmark.AppendMeowResultToCSV(writer, res)
 	}
 	fmt.Println("🎉 All Meow ZK tasks finished!")
 }
 
-func runExperiment(logK int, rhoStr string, L int, linker string, merkle string, onlyCompile bool) benchmark.MeowResult {
-	linker = normalizeLinker(linker)
+func runExperiment(logK int, rhoStr string, L int, merkle string, onlyCompile bool) benchmark.MeowResult {
 	merkle = normalizeMerkle(merkle)
 	K := 1 << logK
 	N := K << 1
@@ -95,7 +92,7 @@ func runExperiment(logK int, rhoStr string, L int, linker string, merkle string,
 	depth := int(math.Log2(float64(N)))
 	field := ecc.BN254.ScalarField()
 
-	fmt.Printf("🔥 [Meow ZK Protocol] logK=%d, K=%d, N=%d, L=%d, linker=%s, merkle=%s\n", logK, K, N, L, linker, merkle)
+	fmt.Printf("🔥 [Meow ZK Protocol] logK=%d, K=%d, N=%d, L=%d, linker=%s, merkle=%s\n", logK, K, N, L, linkerQABatch, merkle)
 
 	if onlyCompile {
 		fmt.Println("=== 🔍 Compiling Circuit for Constraints ===")
@@ -112,16 +109,15 @@ func runExperiment(logK int, rhoStr string, L int, linker string, merkle string,
 			K: K, N: N, Depth: depth,
 			DomainK: rootsK, WeightsK: weightsK,
 			DomainN: rootsN, WeightsN: weightsN,
-			ColsEncA: make([][]frontend.Variable, L), ColsEncB: make([][]frontend.Variable, L), ColsEncC: make([][]frontend.Variable, L),
-			Indices: make([]frontend.Variable, L),
-			VecX:    make([]frontend.Variable, K), VecYZ: make([]frontend.Variable, K),
+			ColsEncABC: make([][]frontend.Variable, L),
+			Indices:    make([]frontend.Variable, L),
+			VecX:       make([]frontend.Variable, K), VecYZ: make([]frontend.Variable, K),
 			EncX: make([]frontend.Variable, N), EncYZ: make([]frontend.Variable, N),
-			TargetEncX: make([]frontend.Variable, L), TargetEncYZ: make([]frontend.Variable, L),
+			TargetXYZ: make([][]frontend.Variable, L),
 		}
 		for i := 0; i < L; i++ {
-			emptyCircuit.ColsEncA[i] = make([]frontend.Variable, K)
-			emptyCircuit.ColsEncB[i] = make([]frontend.Variable, K)
-			emptyCircuit.ColsEncC[i] = make([]frontend.Variable, K)
+			emptyCircuit.ColsEncABC[i] = make([]frontend.Variable, 3*K)
+			emptyCircuit.TargetXYZ[i] = make([]frontend.Variable, 2)
 		}
 
 		r1csSystem, err := frontend.Compile(field, r1cs.NewBuilder, emptyCircuit)
@@ -135,7 +131,7 @@ func runExperiment(logK int, rhoStr string, L int, linker string, merkle string,
 		return benchmark.MeowResult{
 			LogK:        logK,
 			Rho:         rhoStr,
-			Linker:      linker,
+			Linker:      linkerQABatch,
 			Merkle:      merkle,
 			N:           N,
 			NumQueries:  L,
@@ -150,10 +146,10 @@ func runExperiment(logK int, rhoStr string, L int, linker string, merkle string,
 	var circuitSetupTime float64
 	var cpLinkSetupTime float64
 	startProtocolSetup := time.Now()
-	ck1 := crypto.SetupCommitKey(K)
-	ckScalar := crypto.SetupCommitKey(1)
+	ckABC := crypto.SetupCommitKey(3 * K)
+	ckXYZ := crypto.SetupCommitKey(2)
 	encoder := crypto.NewEncoder(K, N)
-	prover := protocol.NewProver(nil, ck1, encoder)
+	prover := protocol.NewProver(nil, ckABC, encoder)
 	protocolSetupTime += time.Since(startProtocolSetup).Seconds()
 
 	// =========================================================================
@@ -173,12 +169,10 @@ func runExperiment(logK int, rhoStr string, L int, linker string, merkle string,
 
 	var encA, encB, encC [][]fr.Element
 	var colsEncA, colsEncB, colsEncC [][]fr.Element
-	var treeA, treeB, treeC [][]fr.Element
-
-	var cmA, cmB, cmC fr.Element
-
-	var leavesA, leavesB, leavesC []bn254.G1Affine
-	var blA, blB, blC []fr.Element
+	var treeABC [][]fr.Element
+	var rootABC fr.Element
+	var leavesABC []bn254.G1Affine
+	var blABC []fr.Element
 
 	var wg sync.WaitGroup
 	wg.Add(3)
@@ -188,7 +182,6 @@ func runExperiment(logK int, rhoStr string, L int, linker string, merkle string,
 		defer wg.Done()
 		_, encA, _ = prover.EncodeMatrix(matA)
 		colsEncA = matrix.Transpose(encA, K, N)
-		treeA, cmA, leavesA, blA = prover.CommitMatrixBlinded(colsEncA, depth)
 	}()
 
 	// Matrix B
@@ -196,7 +189,6 @@ func runExperiment(logK int, rhoStr string, L int, linker string, merkle string,
 		defer wg.Done()
 		_, encB, _ = prover.EncodeMatrix(matB)
 		colsEncB = matrix.Transpose(encB, K, N)
-		treeB, cmB, leavesB, blB = prover.CommitMatrixBlinded(colsEncB, depth)
 	}()
 
 	// Matrix C
@@ -204,12 +196,15 @@ func runExperiment(logK int, rhoStr string, L int, linker string, merkle string,
 		defer wg.Done()
 		_, encC, _ = prover.EncodeMatrix(matC)
 		colsEncC = matrix.Transpose(encC, K, N)
-		treeC, cmC, leavesC, blC = prover.CommitMatrixBlinded(colsEncC, depth)
 	}()
 
 	wg.Wait()
 
-	CmABC := crypto.HashElementsMiMC(cmA, cmB, cmC)
+	colsEncABC := combineABCColumns(colsEncA, colsEncB, colsEncC, K)
+	leavesABC, blABC = crypto.BatchPedersenCommitBlinded(colsEncABC, ckABC)
+	treeABC, rootABC = crypto.BuildMerkleTreeFromGroupElements(leavesABC, depth)
+
+	CmABC := crypto.HashElementsMiMC(rootABC)
 	ChallengeR := crypto.HashElements(CmABC)
 	ChallengeRPowers := matrix.Powers(ChallengeR, K)
 	matCommitTime := time.Since(startMatCommit).Seconds()
@@ -224,10 +219,11 @@ func runExperiment(logK int, rhoStr string, L int, linker string, merkle string,
 	_, encX, _ := encoder.Encode(vecX)
 	_, encYZ, _ := encoder.Encode(vecYZ)
 
-	treeX, cmX, leavesX, blX := prover.CommitScalarsBlinded(encX, depth, ckScalar)
-	treeYZ, cmYZ, leavesYZ, blYZ := prover.CommitScalarsBlinded(encYZ, depth, ckScalar)
+	colsXYZ := combineXYZScalars(encX, encYZ)
+	leavesXYZ, blXYZ := crypto.BatchPedersenCommitBlinded(colsXYZ, ckXYZ)
+	treeXYZ, rootXYZ := crypto.BuildMerkleTreeFromGroupElements(leavesXYZ, depth)
 
-	CmXYZ := crypto.HashElementsMiMC(cmX, cmYZ)
+	CmXYZ := crypto.HashElementsMiMC(rootXYZ)
 	indices, _ := crypto.GenerateUniqueIndices(CmXYZ, N, L)
 	rsPointX, rsPointYZ, _ := protocol.GenerateRSEvaluationPoints(CmXYZ, N)
 	vecCommitTime := time.Since(startVecCommit).Seconds()
@@ -250,16 +246,15 @@ func runExperiment(logK int, rhoStr string, L int, linker string, merkle string,
 		K: K, N: N, Depth: depth,
 		DomainK: rootsK, WeightsK: weightsK,
 		DomainN: rootsN, WeightsN: weightsN,
-		ColsEncA: make([][]frontend.Variable, L), ColsEncB: make([][]frontend.Variable, L), ColsEncC: make([][]frontend.Variable, L),
-		Indices: make([]frontend.Variable, L),
-		VecX:    make([]frontend.Variable, K), VecYZ: make([]frontend.Variable, K),
+		ColsEncABC: make([][]frontend.Variable, L),
+		Indices:    make([]frontend.Variable, L),
+		VecX:       make([]frontend.Variable, K), VecYZ: make([]frontend.Variable, K),
 		EncX: make([]frontend.Variable, N), EncYZ: make([]frontend.Variable, N),
-		TargetEncX: make([]frontend.Variable, L), TargetEncYZ: make([]frontend.Variable, L),
+		TargetXYZ: make([][]frontend.Variable, L),
 	}
 	for i := 0; i < L; i++ {
-		emptyCircuit.ColsEncA[i] = make([]frontend.Variable, K)
-		emptyCircuit.ColsEncB[i] = make([]frontend.Variable, K)
-		emptyCircuit.ColsEncC[i] = make([]frontend.Variable, K)
+		emptyCircuit.ColsEncABC[i] = make([]frontend.Variable, 3*K)
+		emptyCircuit.TargetXYZ[i] = make([]frontend.Variable, 2)
 	}
 
 	r1csSystem, _ := frontend.Compile(field, r1cs.NewBuilder, emptyCircuit)
@@ -276,13 +271,13 @@ func runExperiment(logK int, rhoStr string, L int, linker string, merkle string,
 		K: K, N: N, Depth: depth,
 		DomainK: rootsK, WeightsK: weightsK,
 		DomainN: rootsN, WeightsN: weightsN,
-		Roots: [5]frontend.Variable{cmA, cmB, cmC, cmX, cmYZ}, CmABC: CmABC, CmXYZ: CmXYZ,
+		RootABC: rootABC, RootXYZ: rootXYZ, CmABC: CmABC, CmXYZ: CmXYZ,
 		ChallengeR: ChallengeR, RSPointX: rsPointX, RSPointYZ: rsPointYZ,
-		ColsEncA: make([][]frontend.Variable, L), ColsEncB: make([][]frontend.Variable, L), ColsEncC: make([][]frontend.Variable, L),
-		Indices: make([]frontend.Variable, L),
-		VecX:    make([]frontend.Variable, K), VecYZ: make([]frontend.Variable, K),
+		ColsEncABC: make([][]frontend.Variable, L),
+		Indices:    make([]frontend.Variable, L),
+		VecX:       make([]frontend.Variable, K), VecYZ: make([]frontend.Variable, K),
 		EncX: make([]frontend.Variable, N), EncYZ: make([]frontend.Variable, N),
-		TargetEncX: make([]frontend.Variable, L), TargetEncYZ: make([]frontend.Variable, L),
+		TargetXYZ: make([][]frontend.Variable, L),
 	}
 
 	for i := 0; i < K; i++ {
@@ -296,22 +291,18 @@ func runExperiment(logK int, rhoStr string, L int, linker string, merkle string,
 
 	for i, idx := range indices {
 		assignment.Indices[i] = idx
-		assignment.TargetEncX[i] = encX[idx]
-		assignment.TargetEncYZ[i] = encYZ[idx]
-
-		assignment.ColsEncA[i] = make([]frontend.Variable, K)
-		assignment.ColsEncB[i] = make([]frontend.Variable, K)
-		assignment.ColsEncC[i] = make([]frontend.Variable, K)
+		assignment.TargetXYZ[i] = []frontend.Variable{encX[idx], encYZ[idx]}
+		assignment.ColsEncABC[i] = make([]frontend.Variable, 3*K)
 		for j := 0; j < K; j++ {
-			assignment.ColsEncA[i][j] = colsEncA[idx][j]
-			assignment.ColsEncB[i][j] = colsEncB[idx][j]
-			assignment.ColsEncC[i][j] = colsEncC[idx][j]
+			assignment.ColsEncABC[i][j] = colsEncA[idx][j]
+			assignment.ColsEncABC[i][K+j] = colsEncB[idx][j]
+			assignment.ColsEncABC[i][2*K+j] = colsEncC[idx][j]
 		}
 	}
 
 	startProtocolBindSetup := time.Now()
-	proverWithPK := protocol.NewProver(pk, ck1, encoder)
-	verifier := protocol.NewVerifier(vk, ck1, proverWithPK.CK2)
+	proverWithPK := protocol.NewProver(pk, ckABC, encoder)
+	verifier := protocol.NewVerifier(vk, ckABC, proverWithPK.CK2)
 	protocolSetupTime += time.Since(startProtocolBindSetup).Seconds()
 
 	columnCommitIndex := -1
@@ -328,39 +319,20 @@ func runExperiment(logK int, rhoStr string, L int, linker string, merkle string,
 		log.Fatalf("❌ Grouped commitment mismatch: expected grouped column len=%d and scalar len=%d", 3*L*K, 2*L)
 	}
 
-	var columnQAPK crypto.QALinkProvingKey
-	var columnQAVK crypto.QALinkVerifyingKey
-	var scalarQAPK crypto.QALinkProvingKey
-	var scalarQAVK crypto.QALinkVerifyingKey
 	var columnQABatchPK crypto.QABatchLinkProvingKey
 	var columnQABatchVK crypto.QABatchLinkVerifyingKey
 	var scalarQABatchPK crypto.QABatchLinkProvingKey
 	var scalarQABatchVK crypto.QABatchLinkVerifyingKey
-	if linker == linkerQANIZK || linker == linkerQABatch {
-		startCPLinkSetup := time.Now()
-		var err error
-		switch linker {
-		case linkerQANIZK:
-			columnQAPK, columnQAVK, err = crypto.SetupQALink(3*L, K, proverWithPK.CK2[columnCommitIndex], ck1)
-			if err != nil {
-				log.Fatalf("❌ Column QA-NIZK setup failed: %v", err)
-			}
-			scalarQAPK, scalarQAVK, err = crypto.SetupQALink(2*L, 1, proverWithPK.CK2[scalarCommitIndex], ckScalar)
-			if err != nil {
-				log.Fatalf("❌ Scalar QA-NIZK setup failed: %v", err)
-			}
-		case linkerQABatch:
-			columnQABatchPK, columnQABatchVK, err = crypto.SetupQABatchLink(3*L, K, proverWithPK.CK2[columnCommitIndex], ck1)
-			if err != nil {
-				log.Fatalf("❌ Column QA-batch setup failed: %v", err)
-			}
-			scalarQABatchPK, scalarQABatchVK, err = crypto.SetupQABatchLink(2*L, 1, proverWithPK.CK2[scalarCommitIndex], ckScalar)
-			if err != nil {
-				log.Fatalf("❌ Scalar QA-batch setup failed: %v", err)
-			}
-		}
-		cpLinkSetupTime += time.Since(startCPLinkSetup).Seconds()
+	startCPLinkSetup := time.Now()
+	columnQABatchPK, columnQABatchVK, err := crypto.SetupQABatchLink(L, 3*K, proverWithPK.CK2[columnCommitIndex], ckABC)
+	if err != nil {
+		log.Fatalf("❌ Column QA-batch setup failed: %v", err)
 	}
+	scalarQABatchPK, scalarQABatchVK, err = crypto.SetupQABatchLink(L, 2, proverWithPK.CK2[scalarCommitIndex], ckXYZ)
+	if err != nil {
+		log.Fatalf("❌ Scalar QA-batch setup failed: %v", err)
+	}
+	cpLinkSetupTime += time.Since(startCPLinkSetup).Seconds()
 	setupTime := protocolSetupTime + circuitSetupTime + cpLinkSetupTime
 
 	fmt.Println("=== 3. Generating Proof ===")
@@ -382,38 +354,23 @@ func runExperiment(logK int, rhoStr string, L int, linker string, merkle string,
 	// =========================================================================
 	fmt.Println("=== Generating Off-line Proofs ===")
 
-	var mpA [][]fr.Element
-	var mpB [][]fr.Element
-	var mpC [][]fr.Element
-	var mpX [][]fr.Element
-	var mpYZ [][]fr.Element
-	var mmpA crypto.MerkleMultiProof
-	var mmpB crypto.MerkleMultiProof
-	var mmpC crypto.MerkleMultiProof
-	var mmpX crypto.MerkleMultiProof
-	var mmpYZ crypto.MerkleMultiProof
+	var mpABC [][]fr.Element
+	var mpXYZ [][]fr.Element
+	var mmpABC crypto.MerkleMultiProof
+	var mmpXYZ crypto.MerkleMultiProof
 
 	startMerkleProve := time.Now()
 	switch merkle {
 	case merkleSingle:
-		mpA = make([][]fr.Element, L)
-		mpB = make([][]fr.Element, L)
-		mpC = make([][]fr.Element, L)
-		mpX = make([][]fr.Element, L)
-		mpYZ = make([][]fr.Element, L)
+		mpABC = make([][]fr.Element, L)
+		mpXYZ = make([][]fr.Element, L)
 		for i, idx := range indices {
-			mpA[i] = proverWithPK.GenerateMembershipProof(treeA, idx, depth)
-			mpB[i] = proverWithPK.GenerateMembershipProof(treeB, idx, depth)
-			mpC[i] = proverWithPK.GenerateMembershipProof(treeC, idx, depth)
-			mpX[i] = proverWithPK.GenerateMembershipProof(treeX, idx, depth)
-			mpYZ[i] = proverWithPK.GenerateMembershipProof(treeYZ, idx, depth)
+			mpABC[i] = proverWithPK.GenerateMembershipProof(treeABC, idx, depth)
+			mpXYZ[i] = proverWithPK.GenerateMembershipProof(treeXYZ, idx, depth)
 		}
 	case merkleMulti:
-		mmpA = crypto.GetMerkleMultiProof(treeA, indices, depth)
-		mmpB = crypto.GetMerkleMultiProof(treeB, indices, depth)
-		mmpC = crypto.GetMerkleMultiProof(treeC, indices, depth)
-		mmpX = crypto.GetMerkleMultiProof(treeX, indices, depth)
-		mmpYZ = crypto.GetMerkleMultiProof(treeYZ, indices, depth)
+		mmpABC = crypto.GetMerkleMultiProof(treeABC, indices, depth)
+		mmpXYZ = crypto.GetMerkleMultiProof(treeXYZ, indices, depth)
 	default:
 		log.Fatalf("unsupported merkle opening %q", merkle)
 	}
@@ -421,90 +378,47 @@ func runExperiment(logK int, rhoStr string, L int, linker string, merkle string,
 
 	startCPLinkProve := time.Now()
 
-	columnBlocks := make([][]fr.Element, 0, 3*L)
-	columnExternalCommitments := make([]bn254.G1Affine, 0, 3*L)
-	columnExternalBlindings := make([]fr.Element, 0, 3*L)
+	columnBlocks := make([][]fr.Element, 0, L)
+	columnExternalCommitments := make([]bn254.G1Affine, 0, L)
+	columnExternalBlindings := make([]fr.Element, 0, L)
 	for _, idx := range indices {
-		columnBlocks = append(columnBlocks, colsEncA[idx])
-		columnExternalCommitments = append(columnExternalCommitments, leavesA[idx])
-		columnExternalBlindings = append(columnExternalBlindings, blA[idx])
-	}
-	for _, idx := range indices {
-		columnBlocks = append(columnBlocks, colsEncB[idx])
-		columnExternalCommitments = append(columnExternalCommitments, leavesB[idx])
-		columnExternalBlindings = append(columnExternalBlindings, blB[idx])
-	}
-	for _, idx := range indices {
-		columnBlocks = append(columnBlocks, colsEncC[idx])
-		columnExternalCommitments = append(columnExternalCommitments, leavesC[idx])
-		columnExternalBlindings = append(columnExternalBlindings, blC[idx])
+		columnBlocks = append(columnBlocks, combineABCColumn(colsEncA[idx], colsEncB[idx], colsEncC[idx], K))
+		columnExternalCommitments = append(columnExternalCommitments, leavesABC[idx])
+		columnExternalBlindings = append(columnExternalBlindings, blABC[idx])
 	}
 
-	scalarBlocks := make([][]fr.Element, 0, 2*L)
-	scalarExternalCommitments := make([]bn254.G1Affine, 0, 2*L)
-	scalarExternalBlindings := make([]fr.Element, 0, 2*L)
+	scalarBlocks := make([][]fr.Element, 0, L)
+	scalarExternalCommitments := make([]bn254.G1Affine, 0, L)
+	scalarExternalBlindings := make([]fr.Element, 0, L)
 	for _, idx := range indices {
-		scalarBlocks = append(scalarBlocks, []fr.Element{encX[idx]})
-		scalarExternalCommitments = append(scalarExternalCommitments, leavesX[idx])
-		scalarExternalBlindings = append(scalarExternalBlindings, blX[idx])
-	}
-	for _, idx := range indices {
-		scalarBlocks = append(scalarBlocks, []fr.Element{encYZ[idx]})
-		scalarExternalCommitments = append(scalarExternalCommitments, leavesYZ[idx])
-		scalarExternalBlindings = append(scalarExternalBlindings, blYZ[idx])
+		scalarBlocks = append(scalarBlocks, []fr.Element{encX[idx], encYZ[idx]})
+		scalarExternalCommitments = append(scalarExternalCommitments, leavesXYZ[idx])
+		scalarExternalBlindings = append(scalarExternalBlindings, blXYZ[idx])
 	}
 
-	var columnQAProof crypto.QALinkProof
-	var scalarQAProof crypto.QALinkProof
-	var columnQABatchProof crypto.QABatchLinkProof
-	var scalarQABatchProof crypto.QABatchLinkProof
-	switch linker {
-	case linkerQANIZK:
-		columnQAProof, err = crypto.ProveQALink(
-			columnBlocks,
-			blindingsIn[columnCommitIndex],
-			columnExternalBlindings,
-			columnQAPK,
-		)
-		if err != nil {
-			log.Fatalf("❌ Column QA-NIZK proof failed: %v", err)
-		}
-		scalarQAProof, err = crypto.ProveQALink(
-			scalarBlocks,
-			blindingsIn[scalarCommitIndex],
-			scalarExternalBlindings,
-			scalarQAPK,
-		)
-		if err != nil {
-			log.Fatalf("❌ Scalar QA-NIZK proof failed: %v", err)
-		}
-	case linkerQABatch:
-		columnQABatchProof, err = crypto.ProveQABatchLink(
-			columnBlocks,
-			blindingsIn[columnCommitIndex],
-			columnExternalBlindings,
-			columnQABatchPK,
-			cmVec2[columnCommitIndex],
-			columnExternalCommitments,
-			meowQABatchContext(1, []fr.Element{cmA, cmB, cmC}, indices)...,
-		)
-		if err != nil {
-			log.Fatalf("❌ Column QA-batch proof failed: %v", err)
-		}
-		scalarQABatchProof, err = crypto.ProveQABatchLink(
-			scalarBlocks,
-			blindingsIn[scalarCommitIndex],
-			scalarExternalBlindings,
-			scalarQABatchPK,
-			cmVec2[scalarCommitIndex],
-			scalarExternalCommitments,
-			meowQABatchContext(2, []fr.Element{cmX, cmYZ}, indices)...,
-		)
-		if err != nil {
-			log.Fatalf("❌ Scalar QA-batch proof failed: %v", err)
-		}
-	default:
-		log.Fatalf("unsupported linker %q", linker)
+	columnQABatchProof, err := crypto.ProveQABatchLink(
+		columnBlocks,
+		blindingsIn[columnCommitIndex],
+		columnExternalBlindings,
+		columnQABatchPK,
+		cmVec2[columnCommitIndex],
+		columnExternalCommitments,
+		meowQABatchContext(1, []fr.Element{rootABC}, indices)...,
+	)
+	if err != nil {
+		log.Fatalf("❌ Column QA-batch proof failed: %v", err)
+	}
+	scalarQABatchProof, err := crypto.ProveQABatchLink(
+		scalarBlocks,
+		blindingsIn[scalarCommitIndex],
+		scalarExternalBlindings,
+		scalarQABatchPK,
+		cmVec2[scalarCommitIndex],
+		scalarExternalCommitments,
+		meowQABatchContext(2, []fr.Element{rootXYZ}, indices)...,
+	)
+	if err != nil {
+		log.Fatalf("❌ Scalar QA-batch proof failed: %v", err)
 	}
 	cpLinkProveTime := time.Since(startCPLinkProve).Seconds()
 
@@ -518,9 +432,9 @@ func runExperiment(logK int, rhoStr string, L int, linker string, merkle string,
 
 	fmt.Println("=== Verifying All Proofs ===")
 	startVerify := time.Now()
-	expectedCmABC := crypto.HashElementsMiMC(cmA, cmB, cmC)
+	expectedCmABC := crypto.HashElementsMiMC(rootABC)
 	expectedChallengeR := crypto.HashElements(expectedCmABC)
-	expectedCmXYZ := crypto.HashElementsMiMC(cmX, cmYZ)
+	expectedCmXYZ := crypto.HashElementsMiMC(rootXYZ)
 	expectedIndices, _ := crypto.GenerateUniqueIndices(expectedCmXYZ, N, L)
 	expectedRSPointX, expectedRSPointYZ, _ := protocol.GenerateRSEvaluationPoints(expectedCmXYZ, N)
 	if !CmABC.Equal(&expectedCmABC) || !ChallengeR.Equal(&expectedChallengeR) || !CmXYZ.Equal(&expectedCmXYZ) || !rsPointX.Equal(&expectedRSPointX) || !rsPointYZ.Equal(&expectedRSPointYZ) {
@@ -545,37 +459,19 @@ func runExperiment(logK int, rhoStr string, L int, linker string, merkle string,
 	switch merkle {
 	case merkleSingle:
 		for i, idx := range indices {
-			if !verifier.VerifyMembership(cmA, leavesA[idx], mpA[i], idx, depth) {
-				log.Fatal("❌ Merkle A Failed")
+			if !verifier.VerifyMembership(rootABC, leavesABC[idx], mpABC[i], idx, depth) {
+				log.Fatal("❌ Merkle ABC Failed")
 			}
-			if !verifier.VerifyMembership(cmB, leavesB[idx], mpB[i], idx, depth) {
-				log.Fatal("❌ Merkle B Failed")
-			}
-			if !verifier.VerifyMembership(cmC, leavesC[idx], mpC[i], idx, depth) {
-				log.Fatal("❌ Merkle C Failed")
-			}
-			if !verifier.VerifyMembership(cmX, leavesX[idx], mpX[i], idx, depth) {
-				log.Fatal("❌ Merkle X Failed")
-			}
-			if !verifier.VerifyMembership(cmYZ, leavesYZ[idx], mpYZ[i], idx, depth) {
-				log.Fatal("❌ Merkle YZ Failed")
+			if !verifier.VerifyMembership(rootXYZ, leavesXYZ[idx], mpXYZ[i], idx, depth) {
+				log.Fatal("❌ Merkle XYZ Failed")
 			}
 		}
 	case merkleMulti:
-		if !verifier.VerifyMultiMembership(cmA, selectCommitments(leavesA, indices), indices, mmpA, depth) {
-			log.Fatal("❌ Merkle A multiproof failed")
+		if !verifier.VerifyMultiMembership(rootABC, selectCommitments(leavesABC, indices), indices, mmpABC, depth) {
+			log.Fatal("❌ Merkle ABC multiproof failed")
 		}
-		if !verifier.VerifyMultiMembership(cmB, selectCommitments(leavesB, indices), indices, mmpB, depth) {
-			log.Fatal("❌ Merkle B multiproof failed")
-		}
-		if !verifier.VerifyMultiMembership(cmC, selectCommitments(leavesC, indices), indices, mmpC, depth) {
-			log.Fatal("❌ Merkle C multiproof failed")
-		}
-		if !verifier.VerifyMultiMembership(cmX, selectCommitments(leavesX, indices), indices, mmpX, depth) {
-			log.Fatal("❌ Merkle X multiproof failed")
-		}
-		if !verifier.VerifyMultiMembership(cmYZ, selectCommitments(leavesYZ, indices), indices, mmpYZ, depth) {
-			log.Fatal("❌ Merkle YZ multiproof failed")
+		if !verifier.VerifyMultiMembership(rootXYZ, selectCommitments(leavesXYZ, indices), indices, mmpXYZ, depth) {
+			log.Fatal("❌ Merkle XYZ multiproof failed")
 		}
 	default:
 		log.Fatalf("unsupported merkle opening %q", merkle)
@@ -583,23 +479,11 @@ func runExperiment(logK int, rhoStr string, L int, linker string, merkle string,
 	merkleVerifyTime = time.Since(startMerkleVerify).Seconds()
 
 	startCpLink := time.Now()
-	switch linker {
-	case linkerQANIZK:
-		if !crypto.VerifyQALink(cmVec2[columnCommitIndex], columnExternalCommitments, columnQAProof, columnQAVK) {
-			log.Fatal("❌ Column QA-NIZK link failed")
-		}
-		if !crypto.VerifyQALink(cmVec2[scalarCommitIndex], scalarExternalCommitments, scalarQAProof, scalarQAVK) {
-			log.Fatal("❌ Scalar QA-NIZK link failed")
-		}
-	case linkerQABatch:
-		if !crypto.VerifyQABatchLink(cmVec2[columnCommitIndex], columnExternalCommitments, columnQABatchProof, columnQABatchVK, meowQABatchContext(1, []fr.Element{cmA, cmB, cmC}, indices)...) {
-			log.Fatal("❌ Column QA-batch link failed")
-		}
-		if !crypto.VerifyQABatchLink(cmVec2[scalarCommitIndex], scalarExternalCommitments, scalarQABatchProof, scalarQABatchVK, meowQABatchContext(2, []fr.Element{cmX, cmYZ}, indices)...) {
-			log.Fatal("❌ Scalar QA-batch link failed")
-		}
-	default:
-		log.Fatalf("unsupported linker %q", linker)
+	if !crypto.VerifyQABatchLink(cmVec2[columnCommitIndex], columnExternalCommitments, columnQABatchProof, columnQABatchVK, meowQABatchContext(1, []fr.Element{rootABC}, indices)...) {
+		log.Fatal("❌ Column QA-batch link failed")
+	}
+	if !crypto.VerifyQABatchLink(cmVec2[scalarCommitIndex], scalarExternalCommitments, scalarQABatchProof, scalarQABatchVK, meowQABatchContext(2, []fr.Element{rootXYZ}, indices)...) {
+		log.Fatal("❌ Scalar QA-batch link failed")
 	}
 	cpLinkVerifyTime += time.Since(startCpLink).Seconds()
 
@@ -616,23 +500,14 @@ func runExperiment(logK int, rhoStr string, L int, linker string, merkle string,
 	merkleProofSize := 0
 	switch merkle {
 	case merkleSingle:
-		merkleProofSize = L*5*depth*crypto.MerkleHashSizeBytes + L*5*crypto.G1AffineSizeBytes
+		merkleProofSize = L*2*depth*crypto.MerkleHashSizeBytes + L*2*crypto.G1AffineSizeBytes
 	case merkleMulti:
-		merkleProofSize = crypto.MerkleMultiProofSizeBytes(mmpA) +
-			crypto.MerkleMultiProofSizeBytes(mmpB) +
-			crypto.MerkleMultiProofSizeBytes(mmpC) +
-			crypto.MerkleMultiProofSizeBytes(mmpX) +
-			crypto.MerkleMultiProofSizeBytes(mmpYZ) +
-			L*5*crypto.G1AffineSizeBytes
+		merkleProofSize = crypto.MerkleMultiProofSizeBytes(mmpABC) +
+			crypto.MerkleMultiProofSizeBytes(mmpXYZ) +
+			L*2*crypto.G1AffineSizeBytes
 	}
 
-	cpLinkProofSize := 0
-	switch linker {
-	case linkerQANIZK:
-		cpLinkProofSize = crypto.QALinkProofSizeBytes(columnQAProof) + crypto.QALinkProofSizeBytes(scalarQAProof)
-	case linkerQABatch:
-		cpLinkProofSize = crypto.QABatchLinkProofSizeBytes(columnQABatchProof) + crypto.QABatchLinkProofSizeBytes(scalarQABatchProof)
-	}
+	cpLinkProofSize := crypto.QABatchLinkProofSizeBytes(columnQABatchProof) + crypto.QABatchLinkProofSizeBytes(scalarQABatchProof)
 
 	totalProofSize := groth16ProofSize + merkleProofSize + cpLinkProofSize
 
@@ -642,7 +517,7 @@ func runExperiment(logK int, rhoStr string, L int, linker string, merkle string,
 	return benchmark.MeowResult{
 		LogK:              logK,
 		Rho:               rhoStr,
-		Linker:            linker,
+		Linker:            linkerQABatch,
 		Merkle:            merkle,
 		N:                 N,
 		NumQueries:        L,
@@ -669,18 +544,6 @@ func runExperiment(logK int, rhoStr string, L int, linker string, merkle string,
 	}
 }
 
-func normalizeLinker(linker string) string {
-	switch strings.ToLower(strings.TrimSpace(linker)) {
-	case "", linkerQANIZK, "qa", "qanizk":
-		return linkerQANIZK
-	case linkerQABatch, "qabatch", "qa_rlc", "qarlc":
-		return linkerQABatch
-	default:
-		log.Fatalf("unsupported linker %q; use %q or %q", linker, linkerQANIZK, linkerQABatch)
-	}
-	return linkerQANIZK
-}
-
 func normalizeMerkle(merkle string) string {
 	switch strings.ToLower(strings.TrimSpace(merkle)) {
 	case "", merkleSingle:
@@ -697,6 +560,30 @@ func selectCommitments(leaves []bn254.G1Affine, indices []int) []bn254.G1Affine 
 	out := make([]bn254.G1Affine, len(indices))
 	for i, idx := range indices {
 		out[i] = leaves[idx]
+	}
+	return out
+}
+
+func combineABCColumns(a, b, c [][]fr.Element, blockLen int) [][]fr.Element {
+	out := make([][]fr.Element, len(a))
+	for i := range a {
+		out[i] = combineABCColumn(a[i], b[i], c[i], blockLen)
+	}
+	return out
+}
+
+func combineABCColumn(a, b, c []fr.Element, blockLen int) []fr.Element {
+	out := make([]fr.Element, 0, 3*blockLen)
+	out = append(out, a...)
+	out = append(out, b...)
+	out = append(out, c...)
+	return out
+}
+
+func combineXYZScalars(x, yz []fr.Element) [][]fr.Element {
+	out := make([][]fr.Element, len(x))
+	for i := range x {
+		out[i] = []fr.Element{x[i], yz[i]}
 	}
 	return out
 }

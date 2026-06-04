@@ -17,8 +17,7 @@ usage() {
 	echo "" >&2
 	echo "examples:" >&2
 	echo "  scripts/run_bench.sh meow --K 10 --L 128" >&2
-	echo "  scripts/run_bench.sh meow --K 10 --L 128 --linker qa_nizk --merkle multi" >&2
-	echo "  scripts/run_bench.sh meow --K 10 --L 128 --linker qa_batch --merkle multi" >&2
+	echo "  scripts/run_bench.sh meow --K 10 --L 128 --merkle multi" >&2
 	echo "  scripts/run_bench.sh freivalds --K 10 --compile" >&2
 	echo "  scripts/run_bench.sh all --range --compile" >&2
 	exit 2
@@ -61,7 +60,7 @@ docker build -t "$image" .
 env_args="--env-file .env"
 
 for key in \
-	MEOW_LOG_K MEOW_RHO MEOW_L MEOW_LINKER MEOW_MERKLE MEOW_ALL MEOW_ONLY_COMPILE MEOW_OUTPUT_DIR MEOW_LOG_K_FROM MEOW_LOG_K_TO \
+	MEOW_LOG_K MEOW_RHO MEOW_L MEOW_MERKLE MEOW_ALL MEOW_ONLY_COMPILE MEOW_OUTPUT_DIR MEOW_LOG_K_FROM MEOW_LOG_K_TO \
 	FREIVALDS_LOG_K FREIVALDS_ALL FREIVALDS_ONLY_COMPILE FREIVALDS_OUTPUT_DIR FREIVALDS_LOG_K_FROM FREIVALDS_LOG_K_TO
 do
 	value="$(eval "printf '%s' \"\${$key:-}\"")"
