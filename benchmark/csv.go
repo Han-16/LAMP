@@ -55,7 +55,7 @@ type FreivaldsResult struct {
 	VerifyTime        float64
 }
 
-type MeowResult struct {
+type LAMPResult struct {
 	LogK              int
 	Rho               string
 	Linker            string
@@ -84,7 +84,7 @@ type MeowResult struct {
 	TotalProofSize    int
 }
 
-type MeowGPT2Result struct {
+type LAMPGPT2Result struct {
 	SeqLog            int
 	SeqLen            int
 	Rho               string
@@ -144,7 +144,7 @@ func AppendFreivaldsResultToCSV(writer *csv.Writer, res FreivaldsResult) {
 	appendCSV(writer, record, fmt.Sprintf("logK=%d", res.LogK))
 }
 
-func InitMeowCSV(filename string) (*os.File, *csv.Writer) {
+func InitLAMPCSV(filename string) (*os.File, *csv.Writer) {
 	return initCSV(filename, []string{
 		"LogK", "Rho", "Linker", "Merkle", "N", "NumQueries", "Constraints",
 		"MatrixComputeTime(s/ms)", "SetupTime(s/ms)",
@@ -156,7 +156,7 @@ func InitMeowCSV(filename string) (*os.File, *csv.Writer) {
 	})
 }
 
-func AppendMeowResultToCSV(writer *csv.Writer, res MeowResult) {
+func AppendLAMPResultToCSV(writer *csv.Writer, res LAMPResult) {
 	record := []string{
 		strconv.Itoa(res.LogK),
 		res.Rho,
@@ -185,10 +185,10 @@ func AppendMeowResultToCSV(writer *csv.Writer, res MeowResult) {
 		strconv.Itoa(res.CPLinkProofSize),
 		strconv.Itoa(res.TotalProofSize),
 	}
-	appendCSV(writer, record, fmt.Sprintf("Meow Protocol: logK=%d, rho=%s, linker=%s, merkle=%s, L=%d, constraints=%d", res.LogK, res.Rho, res.Linker, res.Merkle, res.NumQueries, res.Constraints))
+	appendCSV(writer, record, fmt.Sprintf("LAMP Protocol: logK=%d, rho=%s, linker=%s, merkle=%s, L=%d, constraints=%d", res.LogK, res.Rho, res.Linker, res.Merkle, res.NumQueries, res.Constraints))
 }
 
-func InitMeowGPT2CSV(filename string) (*os.File, *csv.Writer) {
+func InitLAMPGPT2CSV(filename string) (*os.File, *csv.Writer) {
 	return initCSV(filename, []string{
 		"SeqLog", "SeqLen", "Rho", "Linker", "Merkle", "NumQueries", "NumClaims", "NumCommitGroups", "Constraints",
 		"MatrixComputeTime(s/ms)", "SetupTime(s/ms)",
@@ -200,7 +200,7 @@ func InitMeowGPT2CSV(filename string) (*os.File, *csv.Writer) {
 	})
 }
 
-func AppendMeowGPT2ResultToCSV(writer *csv.Writer, res MeowGPT2Result) {
+func AppendLAMPGPT2ResultToCSV(writer *csv.Writer, res LAMPGPT2Result) {
 	record := []string{
 		strconv.Itoa(res.SeqLog),
 		strconv.Itoa(res.SeqLen),
@@ -230,7 +230,7 @@ func AppendMeowGPT2ResultToCSV(writer *csv.Writer, res MeowGPT2Result) {
 		strconv.Itoa(res.CPLinkProofSize),
 		strconv.Itoa(res.TotalProofSize),
 	}
-	appendCSV(writer, record, fmt.Sprintf("Meow GPT-2 medium layer: seq=2^%d, rho=%s, linker=%s, merkle=%s, L=%d, claims=%d, constraints=%d", res.SeqLog, res.Rho, res.Linker, res.Merkle, res.NumQueries, res.NumClaims, res.Constraints))
+	appendCSV(writer, record, fmt.Sprintf("LAMP GPT-2 medium layer: seq=2^%d, rho=%s, linker=%s, merkle=%s, L=%d, claims=%d, constraints=%d", res.SeqLog, res.Rho, res.Linker, res.Merkle, res.NumQueries, res.NumClaims, res.Constraints))
 }
 
 func InitFreivaldsGPT2CSV(filename string) (*os.File, *csv.Writer) {

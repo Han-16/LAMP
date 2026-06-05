@@ -7,10 +7,10 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/Han-16/meow/benchmark"
-	"github.com/Han-16/meow/circuit"
-	"github.com/Han-16/meow/config"
-	"github.com/Han-16/meow/matrix"
+	"github.com/Han-16/lamp/benchmark"
+	"github.com/Han-16/lamp/circuit"
+	"github.com/Han-16/lamp/config"
+	"github.com/Han-16/lamp/matrix"
 
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"

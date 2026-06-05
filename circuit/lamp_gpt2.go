@@ -11,36 +11,36 @@ import (
 )
 
 const (
-	MeowGPT2RSSideX = iota
-	MeowGPT2RSSideYZ
+	LAMPGPT2RSSideX = iota
+	LAMPGPT2RSSideYZ
 )
 
-const meowGPT2RSBatchChallengeTag = 73001
+const lampGPT2RSBatchChallengeTag = 73001
 
-type MeowGPT2Circuit struct {
+type LAMPGPT2Circuit struct {
 	Input  []frontend.Variable `gnark:",public"`
 	Output []frontend.Variable `gnark:",public"`
 
-	ColumnGroups []MeowGPT2ColumnGroup
+	ColumnGroups []LAMPGPT2ColumnGroup
 	Scalars      []frontend.Variable
 
 	GroupRoots [5]frontend.Variable `gnark:",public"` // length S, D, Dh, M, scalar
 	TensorCm   frontend.Variable    `gnark:",public"`
 	GlobalCm   frontend.Variable    `gnark:",public"`
 
-	Claims          []MeowGPT2RectClaim
-	RSBatches       []MeowGPT2RSBatch
-	EqualityChecks  []MeowGPT2EntryEqualityCheck
-	TransposeChecks []MeowGPT2TransposeCheck
-	SumChecks       []MeowGPT2SumCheck
+	Claims          []LAMPGPT2RectClaim
+	RSBatches       []LAMPGPT2RSBatch
+	EqualityChecks  []LAMPGPT2EntryEqualityCheck
+	TransposeChecks []LAMPGPT2TransposeCheck
+	SumChecks       []LAMPGPT2SumCheck
 }
 
-type MeowGPT2ColumnGroup struct {
+type LAMPGPT2ColumnGroup struct {
 	BlockLen int
 	Blocks   [][]frontend.Variable
 }
 
-type MeowGPT2RectClaim struct {
+type LAMPGPT2RectClaim struct {
 	ID                int
 	Rows, Inner, Cols int
 	NIn, NOut         int
@@ -76,12 +76,12 @@ type MeowGPT2RectClaim struct {
 	EncYZ []frontend.Variable
 }
 
-type MeowGPT2RSBatchTerm struct {
+type LAMPGPT2RSBatchTerm struct {
 	ClaimIndex int
 	Side       int
 }
 
-type MeowGPT2RSBatch struct {
+type LAMPGPT2RSBatch struct {
 	ID   int
 	K, N int
 
@@ -90,11 +90,11 @@ type MeowGPT2RSBatch struct {
 	DomainN  []fr.Element
 	WeightsN []fr.Element
 
-	Terms   []MeowGPT2RSBatchTerm
+	Terms   []LAMPGPT2RSBatchTerm
 	RSPoint frontend.Variable `gnark:",public"`
 }
 
-type MeowGPT2TransposeCheck struct {
+type LAMPGPT2TransposeCheck struct {
 	LeftGroup, RightGroup int
 	LeftBlocks            []int
 	RightBlocks           []int
@@ -102,7 +102,7 @@ type MeowGPT2TransposeCheck struct {
 	ColIndices            []frontend.Variable `gnark:",public"`
 }
 
-type MeowGPT2EntryEqualityCheck struct {
+type LAMPGPT2EntryEqualityCheck struct {
 	LeftGroup, RightGroup int
 	LeftBlocks            []int
 	RightBlocks           []int
@@ -110,14 +110,14 @@ type MeowGPT2EntryEqualityCheck struct {
 	RightIndices          []frontend.Variable `gnark:",public"`
 }
 
-type MeowGPT2SumCheck struct {
+type LAMPGPT2SumCheck struct {
 	OutputGroup int
 	OutputBlock int
 	TermGroup   int
 	TermBlocks  []int
 }
 
-func (c *MeowGPT2Circuit) Define(api frontend.API) error {
+func (c *LAMPGPT2Circuit) Define(api frontend.API) error {
 	committer, _ := api.(frontend.Committer)
 	h, err := mimc.NewMiMC(api)
 	if err != nil {
@@ -158,7 +158,7 @@ func (c *MeowGPT2Circuit) Define(api frontend.API) error {
 		}
 	}
 
-	lookupTables := newMeowGPT2LookupTables(api, c)
+	lookupTables := newLAMPGPT2LookupTables(api, c)
 	for i := range c.EqualityChecks {
 		c.defineEquality(api, lookupTables, &c.EqualityChecks[i])
 	}
@@ -174,7 +174,7 @@ func (c *MeowGPT2Circuit) Define(api frontend.API) error {
 	return nil
 }
 
-func (c *MeowGPT2Circuit) defineClaim(api frontend.API, h hash.FieldHasher, claim *MeowGPT2RectClaim) error {
+func (c *LAMPGPT2Circuit) defineClaim(api frontend.API, h hash.FieldHasher, claim *LAMPGPT2RectClaim) error {
 	h.Reset()
 	h.Write(c.TensorCm, claim.ID)
 	challengeR := h.Sum()
@@ -234,7 +234,7 @@ func (c *MeowGPT2Circuit) defineClaim(api frontend.API, h hash.FieldHasher, clai
 	return nil
 }
 
-func (c *MeowGPT2Circuit) definePublicInputProjection(api frontend.API, claim *MeowGPT2RectClaim, challengeRPowers []frontend.Variable) {
+func (c *LAMPGPT2Circuit) definePublicInputProjection(api frontend.API, claim *LAMPGPT2RectClaim, challengeRPowers []frontend.Variable) {
 	for col := 0; col < claim.Inner; col++ {
 		fold := frontend.Variable(0)
 		for row := 0; row < claim.Rows; row++ {
@@ -244,7 +244,7 @@ func (c *MeowGPT2Circuit) definePublicInputProjection(api frontend.API, claim *M
 	}
 }
 
-func (c *MeowGPT2Circuit) definePublicOutputProjection(api frontend.API, claim *MeowGPT2RectClaim, challengeRPowers []frontend.Variable) {
+func (c *LAMPGPT2Circuit) definePublicOutputProjection(api frontend.API, claim *LAMPGPT2RectClaim, challengeRPowers []frontend.Variable) {
 	for col := 0; col < claim.Cols; col++ {
 		fold := frontend.Variable(0)
 		for row := 0; row < claim.Rows; row++ {
@@ -254,13 +254,13 @@ func (c *MeowGPT2Circuit) definePublicOutputProjection(api frontend.API, claim *
 	}
 }
 
-func (c *MeowGPT2Circuit) defineRSBatch(api frontend.API, h hash.FieldHasher, batch *MeowGPT2RSBatch) error {
+func (c *LAMPGPT2Circuit) defineRSBatch(api frontend.API, h hash.FieldHasher, batch *LAMPGPT2RSBatch) error {
 	if len(batch.Terms) == 0 {
-		return fmt.Errorf("empty Meow GPT-2 RS batch %d", batch.ID)
+		return fmt.Errorf("empty LAMP GPT-2 RS batch %d", batch.ID)
 	}
 
 	h.Reset()
-	h.Write(c.GlobalCm, meowGPT2RSBatchChallengeTag, batch.ID)
+	h.Write(c.GlobalCm, lampGPT2RSBatchChallengeTag, batch.ID)
 	beta := h.Sum()
 	betaPowers := Powers(api, beta, len(batch.Terms))
 
@@ -276,7 +276,7 @@ func (c *MeowGPT2Circuit) defineRSBatch(api frontend.API, h hash.FieldHasher, ba
 	for i, term := range batch.Terms {
 		vec, enc, err := c.rsBatchTermValues(term, batch.K, batch.N)
 		if err != nil {
-			return fmt.Errorf("invalid term %d in Meow GPT-2 RS batch %d: %w", i, batch.ID, err)
+			return fmt.Errorf("invalid term %d in LAMP GPT-2 RS batch %d: %w", i, batch.ID, err)
 		}
 
 		coeff := betaPowers[i]
@@ -292,19 +292,19 @@ func (c *MeowGPT2Circuit) defineRSBatch(api frontend.API, h hash.FieldHasher, ba
 	return nil
 }
 
-func (c *MeowGPT2Circuit) rsBatchTermValues(term MeowGPT2RSBatchTerm, k, n int) ([]frontend.Variable, []frontend.Variable, error) {
+func (c *LAMPGPT2Circuit) rsBatchTermValues(term LAMPGPT2RSBatchTerm, k, n int) ([]frontend.Variable, []frontend.Variable, error) {
 	if term.ClaimIndex < 0 || term.ClaimIndex >= len(c.Claims) {
 		return nil, nil, fmt.Errorf("claim index %d out of range", term.ClaimIndex)
 	}
 
 	claim := c.Claims[term.ClaimIndex]
 	switch term.Side {
-	case MeowGPT2RSSideX:
+	case LAMPGPT2RSSideX:
 		if claim.Inner != k || claim.NIn != n {
 			return nil, nil, fmt.Errorf("X side domain mismatch for claim %d: got k=%d n=%d expected k=%d n=%d", term.ClaimIndex, claim.Inner, claim.NIn, k, n)
 		}
 		return claim.VecX, claim.EncX, nil
-	case MeowGPT2RSSideYZ:
+	case LAMPGPT2RSSideYZ:
 		if claim.Cols != k || claim.NOut != n {
 			return nil, nil, fmt.Errorf("YZ side domain mismatch for claim %d: got k=%d n=%d expected k=%d n=%d", term.ClaimIndex, claim.Cols, claim.NOut, k, n)
 		}
@@ -314,7 +314,7 @@ func (c *MeowGPT2Circuit) rsBatchTermValues(term MeowGPT2RSBatchTerm, k, n int) 
 	}
 }
 
-func (c *MeowGPT2Circuit) defineEquality(api frontend.API, lookups *meowGPT2LookupTables, check *MeowGPT2EntryEqualityCheck) {
+func (c *LAMPGPT2Circuit) defineEquality(api frontend.API, lookups *lampGPT2LookupTables, check *LAMPGPT2EntryEqualityCheck) {
 	for i := 0; i < len(check.LeftBlocks); i++ {
 		leftVal := lookups.Lookup(check.LeftGroup, check.LeftBlocks[i], check.LeftIndices[i])
 		rightVal := lookups.Lookup(check.RightGroup, check.RightBlocks[i], check.RightIndices[i])
@@ -322,7 +322,7 @@ func (c *MeowGPT2Circuit) defineEquality(api frontend.API, lookups *meowGPT2Look
 	}
 }
 
-func (c *MeowGPT2Circuit) defineTranspose(api frontend.API, lookups *meowGPT2LookupTables, check *MeowGPT2TransposeCheck) {
+func (c *LAMPGPT2Circuit) defineTranspose(api frontend.API, lookups *lampGPT2LookupTables, check *LAMPGPT2TransposeCheck) {
 	for i := 0; i < len(check.LeftBlocks); i++ {
 		leftVal := lookups.Lookup(check.LeftGroup, check.LeftBlocks[i], check.RowIndices[i])
 		rightVal := lookups.Lookup(check.RightGroup, check.RightBlocks[i], check.ColIndices[i])
@@ -330,7 +330,7 @@ func (c *MeowGPT2Circuit) defineTranspose(api frontend.API, lookups *meowGPT2Loo
 	}
 }
 
-func (c *MeowGPT2Circuit) defineSum(api frontend.API, check *MeowGPT2SumCheck) {
+func (c *LAMPGPT2Circuit) defineSum(api frontend.API, check *LAMPGPT2SumCheck) {
 	output := c.ColumnGroups[check.OutputGroup].Blocks[check.OutputBlock]
 	for row := 0; row < len(output); row++ {
 		sum := frontend.Variable(0)
@@ -342,27 +342,27 @@ func (c *MeowGPT2Circuit) defineSum(api frontend.API, check *MeowGPT2SumCheck) {
 	}
 }
 
-type meowGPT2LookupKey struct {
+type lampGPT2LookupKey struct {
 	group int
 	block int
 }
 
-type meowGPT2LookupTables struct {
+type lampGPT2LookupTables struct {
 	api    frontend.API
-	c      *MeowGPT2Circuit
-	tables map[meowGPT2LookupKey]logderivlookup.Table
+	c      *LAMPGPT2Circuit
+	tables map[lampGPT2LookupKey]logderivlookup.Table
 }
 
-func newMeowGPT2LookupTables(api frontend.API, c *MeowGPT2Circuit) *meowGPT2LookupTables {
-	return &meowGPT2LookupTables{
+func newLAMPGPT2LookupTables(api frontend.API, c *LAMPGPT2Circuit) *lampGPT2LookupTables {
+	return &lampGPT2LookupTables{
 		api:    api,
 		c:      c,
-		tables: make(map[meowGPT2LookupKey]logderivlookup.Table),
+		tables: make(map[lampGPT2LookupKey]logderivlookup.Table),
 	}
 }
 
-func (l *meowGPT2LookupTables) Lookup(group, block int, index frontend.Variable) frontend.Variable {
-	key := meowGPT2LookupKey{group: group, block: block}
+func (l *lampGPT2LookupTables) Lookup(group, block int, index frontend.Variable) frontend.Variable {
+	key := lampGPT2LookupKey{group: group, block: block}
 	table, ok := l.tables[key]
 	if !ok {
 		table = logderivlookup.New(l.api)

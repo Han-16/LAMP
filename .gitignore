@@ -2,3 +2,7 @@
 .env
 benchmark/**/*.csv
 benchmark/**/system_info.json
+!benchmark/lamp/*.csv
+!benchmark/lamp/system_info.json
+!benchmark/lamp_gpt2/*.csv
+!benchmark/lamp_gpt2/system_info.json

@@ -10,14 +10,14 @@ set -a
 . ./.env
 set +a
 
-image="${MEOWGO_DOCKER_IMAGE:-meowgo}"
+image="${LAMPGO_DOCKER_IMAGE:-lampgo}"
 
 usage() {
-	echo "usage: scripts/run_bench.sh [meow|freivalds|all] [--range] [flags...]" >&2
+	echo "usage: scripts/run_bench.sh [lamp|freivalds|all] [--range] [flags...]" >&2
 	echo "" >&2
 	echo "examples:" >&2
-	echo "  scripts/run_bench.sh meow --K 10 --L 128" >&2
-	echo "  scripts/run_bench.sh meow --K 10 --L 128 --merkle multi" >&2
+	echo "  scripts/run_bench.sh lamp --K 10 --L 128" >&2
+	echo "  scripts/run_bench.sh lamp --K 10 --L 128 --merkle multi" >&2
 	echo "  scripts/run_bench.sh freivalds --K 10 --compile" >&2
 	echo "  scripts/run_bench.sh all --range --compile" >&2
 	exit 2
@@ -48,7 +48,7 @@ for arg in "$@"; do
 done
 
 case "$target" in
-	meow|freivalds|all)
+	lamp|freivalds|all)
 		;;
 	*)
 		usage
@@ -60,7 +60,7 @@ docker build -t "$image" .
 env_args="--env-file .env"
 
 for key in \
-	MEOW_LOG_K MEOW_RHO MEOW_L MEOW_MERKLE MEOW_ALL MEOW_ONLY_COMPILE MEOW_OUTPUT_DIR MEOW_LOG_K_FROM MEOW_LOG_K_TO \
+	LAMP_LOG_K LAMP_RHO LAMP_L LAMP_MERKLE LAMP_ALL LAMP_ONLY_COMPILE LAMP_OUTPUT_DIR LAMP_LOG_K_FROM LAMP_LOG_K_TO \
 	FREIVALDS_LOG_K FREIVALDS_ALL FREIVALDS_ONLY_COMPILE FREIVALDS_OUTPUT_DIR FREIVALDS_LOG_K_FROM FREIVALDS_LOG_K_TO
 do
 	value="$(eval "printf '%s' \"\${$key:-}\"")"
@@ -87,14 +87,14 @@ run_protocol() {
 }
 
 case "$target" in
-	meow)
-		run_protocol meow
+	lamp)
+		run_protocol lamp
 		;;
 	freivalds)
 		run_protocol freivalds
 		;;
 	all)
-		run_protocol meow
+		run_protocol lamp
 		run_protocol freivalds
 		;;
 esac

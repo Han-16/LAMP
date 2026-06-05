@@ -7,7 +7,7 @@ import (
 	"github.com/consensys/gnark/std/lookup/logderivlookup"
 )
 
-type MeowCircuit struct {
+type LAMPCircuit struct {
 	K, N, Depth int
 
 	DomainK  []fr.Element
@@ -33,7 +33,7 @@ type MeowCircuit struct {
 	TargetXYZ  [][]frontend.Variable // [L][2]
 }
 
-func (c *MeowCircuit) Define(api frontend.API) error {
+func (c *LAMPCircuit) Define(api frontend.API) error {
 	committer, _ := api.(frontend.Committer)
 	h, err := mimc.NewMiMC(api)
 	if err != nil {

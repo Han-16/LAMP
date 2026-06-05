@@ -11,12 +11,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Han-16/meow/benchmark"
-	"github.com/Han-16/meow/circuit"
-	"github.com/Han-16/meow/config"
-	"github.com/Han-16/meow/crypto"
-	"github.com/Han-16/meow/matrix"
-	"github.com/Han-16/meow/protocol"
+	"github.com/Han-16/lamp/benchmark"
+	"github.com/Han-16/lamp/circuit"
+	"github.com/Han-16/lamp/config"
+	"github.com/Han-16/lamp/crypto"
+	"github.com/Han-16/lamp/matrix"
+	"github.com/Han-16/lamp/protocol"
 
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark-crypto/ecc/bn254"
@@ -41,24 +41,24 @@ func main() {
 		log.Fatalf("failed to load .env: %v", err)
 	}
 
-	logKFlag := flag.Int("K", config.GetInt("MEOW_LOG_K", 10), "Log base 2 of K")
-	rhoFlag := flag.String("rho", config.GetString("MEOW_RHO", "1/2"), "Code rate")
-	LFlag := flag.Int("L", config.GetInt("MEOW_L", 128), "Number of unique indices L")
-	merkleFlag := flag.String("merkle", config.GetString("MEOW_MERKLE", merkleSingle), "Merkle opening backend: single or multi")
-	allFlag := flag.Bool("all", config.GetBool("MEOW_ALL", false), "Run benchmark range")
-	fromFlag := flag.Int("from", config.GetInt("MEOW_LOG_K_FROM", 7), "First logK when -all is enabled")
-	toFlag := flag.Int("to", config.GetInt("MEOW_LOG_K_TO", 20), "Last logK when -all is enabled")
-	compileFlag := flag.Bool("compile", config.GetBool("MEOW_ONLY_COMPILE", false), "Only compile the circuit to get constraints")
-	onlyCompileFlag := flag.Bool("OnlyCompile", config.GetBool("MEOW_ONLY_COMPILE", false), "Alias for -compile")
+	logKFlag := flag.Int("K", config.GetInt("LAMP_LOG_K", 10), "Log base 2 of K")
+	rhoFlag := flag.String("rho", config.GetString("LAMP_RHO", "1/2"), "Code rate")
+	LFlag := flag.Int("L", config.GetInt("LAMP_L", 128), "Number of unique indices L")
+	merkleFlag := flag.String("merkle", config.GetString("LAMP_MERKLE", merkleSingle), "Merkle opening backend: single or multi")
+	allFlag := flag.Bool("all", config.GetBool("LAMP_ALL", false), "Run benchmark range")
+	fromFlag := flag.Int("from", config.GetInt("LAMP_LOG_K_FROM", 7), "First logK when -all is enabled")
+	toFlag := flag.Int("to", config.GetInt("LAMP_LOG_K_TO", 20), "Last logK when -all is enabled")
+	compileFlag := flag.Bool("compile", config.GetBool("LAMP_ONLY_COMPILE", false), "Only compile the circuit to get constraints")
+	onlyCompileFlag := flag.Bool("OnlyCompile", config.GetBool("LAMP_ONLY_COMPILE", false), "Alias for -compile")
 	flag.Parse()
 
 	onlyCompile := *compileFlag || *onlyCompileFlag
-	outputDir := config.OutputDir("MEOW_OUTPUT_DIR", filepath.Join("benchmark", "meow"))
+	outputDir := config.OutputDir("LAMP_OUTPUT_DIR", filepath.Join("benchmark", "lamp"))
 	if err := benchmark.EnsureDir(outputDir); err != nil {
 		log.Fatalf("failed to create output directory: %v", err)
 	}
-	csvPath := filepath.Join(outputDir, "meow_benchmark_results.csv")
-	file, writer := benchmark.InitMeowCSV(csvPath)
+	csvPath := filepath.Join(outputDir, "lamp_benchmark_results.csv")
+	file, writer := benchmark.InitLAMPCSV(csvPath)
 	defer file.Close()
 
 	if *allFlag {
@@ -68,21 +68,21 @@ func main() {
 		if onlyCompile {
 			fmt.Printf("🚀 [OnlyCompile MODE] Checking constraints for logK=%d..%d...\n", *fromFlag, *toFlag)
 		} else {
-			fmt.Printf("🚀 [ALL MODE] Running Meow ZK benchmarks for logK=%d..%d...\n", *fromFlag, *toFlag)
+			fmt.Printf("🚀 [ALL MODE] Running LAMP ZK benchmarks for logK=%d..%d...\n", *fromFlag, *toFlag)
 		}
 
 		for logK := *fromFlag; logK <= *toFlag; logK++ {
 			res := runExperiment(logK, *rhoFlag, *LFlag, *merkleFlag, onlyCompile)
-			benchmark.AppendMeowResultToCSV(writer, res)
+			benchmark.AppendLAMPResultToCSV(writer, res)
 		}
 	} else {
 		res := runExperiment(*logKFlag, *rhoFlag, *LFlag, *merkleFlag, onlyCompile)
-		benchmark.AppendMeowResultToCSV(writer, res)
+		benchmark.AppendLAMPResultToCSV(writer, res)
 	}
-	fmt.Println("🎉 All Meow ZK tasks finished!")
+	fmt.Println("🎉 All LAMP ZK tasks finished!")
 }
 
-func runExperiment(logK int, rhoStr string, L int, merkle string, onlyCompile bool) benchmark.MeowResult {
+func runExperiment(logK int, rhoStr string, L int, merkle string, onlyCompile bool) benchmark.LAMPResult {
 	merkle = normalizeMerkle(merkle)
 	K := 1 << logK
 	N := K << 1
@@ -92,7 +92,7 @@ func runExperiment(logK int, rhoStr string, L int, merkle string, onlyCompile bo
 	depth := int(math.Log2(float64(N)))
 	field := ecc.BN254.ScalarField()
 
-	fmt.Printf("🔥 [Meow ZK Protocol] logK=%d, K=%d, N=%d, L=%d, linker=%s, merkle=%s\n", logK, K, N, L, linkerQABatch, merkle)
+	fmt.Printf("🔥 [LAMP ZK Protocol] logK=%d, K=%d, N=%d, L=%d, linker=%s, merkle=%s\n", logK, K, N, L, linkerQABatch, merkle)
 
 	if onlyCompile {
 		fmt.Println("=== 🔍 Compiling Circuit for Constraints ===")
@@ -105,7 +105,7 @@ func runExperiment(logK int, rhoStr string, L int, merkle string, onlyCompile bo
 		rootsK := crypto.GetDomainRoots(domainK, K)
 		weightsK := crypto.PrecomputeBarycentricWeights(rootsK)
 
-		emptyCircuit := &circuit.MeowCircuit{
+		emptyCircuit := &circuit.LAMPCircuit{
 			K: K, N: N, Depth: depth,
 			DomainK: rootsK, WeightsK: weightsK,
 			DomainN: rootsN, WeightsN: weightsN,
@@ -128,7 +128,7 @@ func runExperiment(logK int, rhoStr string, L int, merkle string, onlyCompile bo
 		nbConstraints := r1csSystem.GetNbConstraints()
 		fmt.Printf("✅ Circuit compiled successfully! Total Constraints: %d\n", nbConstraints)
 
-		return benchmark.MeowResult{
+		return benchmark.LAMPResult{
 			LogK:        logK,
 			Rho:         rhoStr,
 			Linker:      linkerQABatch,
@@ -240,7 +240,7 @@ func runExperiment(logK int, rhoStr string, L int, merkle string, onlyCompile bo
 	weightsK := crypto.PrecomputeBarycentricWeights(rootsK)
 	protocolSetupTime += time.Since(startDomainSetup).Seconds()
 
-	emptyCircuit := &circuit.MeowCircuit{
+	emptyCircuit := &circuit.LAMPCircuit{
 		K: K, N: N, Depth: depth,
 		DomainK: rootsK, WeightsK: weightsK,
 		DomainN: rootsN, WeightsN: weightsN,
@@ -265,7 +265,7 @@ func runExperiment(logK int, rhoStr string, L int, merkle string, onlyCompile bo
 	// =========================================================================
 	// 5. Generate Proof
 	// =========================================================================
-	assignment := &circuit.MeowCircuit{
+	assignment := &circuit.LAMPCircuit{
 		K: K, N: N, Depth: depth,
 		DomainK: rootsK, WeightsK: weightsK,
 		DomainN: rootsN, WeightsN: weightsN,
@@ -401,7 +401,7 @@ func runExperiment(logK int, rhoStr string, L int, merkle string, onlyCompile bo
 		columnQABatchPK,
 		cmVec2[columnCommitIndex],
 		columnExternalCommitments,
-		meowQABatchContext(1, []fr.Element{rootABC}, indices)...,
+		lampQABatchContext(1, []fr.Element{rootABC}, indices)...,
 	)
 	if err != nil {
 		log.Fatalf("❌ Column QA-batch proof failed: %v", err)
@@ -413,7 +413,7 @@ func runExperiment(logK int, rhoStr string, L int, merkle string, onlyCompile bo
 		scalarQABatchPK,
 		cmVec2[scalarCommitIndex],
 		scalarExternalCommitments,
-		meowQABatchContext(2, []fr.Element{rootXYZ}, indices)...,
+		lampQABatchContext(2, []fr.Element{rootXYZ}, indices)...,
 	)
 	if err != nil {
 		log.Fatalf("❌ Scalar QA-batch proof failed: %v", err)
@@ -477,10 +477,10 @@ func runExperiment(logK int, rhoStr string, L int, merkle string, onlyCompile bo
 	merkleVerifyTime = time.Since(startMerkleVerify).Seconds()
 
 	startCpLink := time.Now()
-	if !crypto.VerifyQABatchLink(cmVec2[columnCommitIndex], columnExternalCommitments, columnQABatchProof, columnQABatchVK, meowQABatchContext(1, []fr.Element{rootABC}, indices)...) {
+	if !crypto.VerifyQABatchLink(cmVec2[columnCommitIndex], columnExternalCommitments, columnQABatchProof, columnQABatchVK, lampQABatchContext(1, []fr.Element{rootABC}, indices)...) {
 		log.Fatal("❌ Column QA-batch link failed")
 	}
-	if !crypto.VerifyQABatchLink(cmVec2[scalarCommitIndex], scalarExternalCommitments, scalarQABatchProof, scalarQABatchVK, meowQABatchContext(2, []fr.Element{rootXYZ}, indices)...) {
+	if !crypto.VerifyQABatchLink(cmVec2[scalarCommitIndex], scalarExternalCommitments, scalarQABatchProof, scalarQABatchVK, lampQABatchContext(2, []fr.Element{rootXYZ}, indices)...) {
 		log.Fatal("❌ Scalar QA-batch link failed")
 	}
 	cpLinkVerifyTime += time.Since(startCpLink).Seconds()
@@ -512,7 +512,7 @@ func runExperiment(logK int, rhoStr string, L int, merkle string, onlyCompile bo
 	fmt.Printf("📊 Proof Sizes -> Groth16: %d B, Merkle: %d B, CPLink: %d B | Total: %d B\n",
 		groth16ProofSize, merkleProofSize, cpLinkProofSize, totalProofSize)
 
-	return benchmark.MeowResult{
+	return benchmark.LAMPResult{
 		LogK:              logK,
 		Rho:               rhoStr,
 		Linker:            linkerQABatch,
@@ -578,9 +578,9 @@ func combineXYZScalars(x, yz []fr.Element) [][]fr.Element {
 	return out
 }
 
-func meowQABatchContext(label uint64, roots []fr.Element, indices []int) []fr.Element {
+func lampQABatchContext(label uint64, roots []fr.Element, indices []int) []fr.Element {
 	context := make([]fr.Element, 0, 3+len(roots)+len(indices))
-	context = append(context, uint64Element(0x4d454f5742415443), uint64Element(label), uint64Element(uint64(len(indices))))
+	context = append(context, uint64Element(0x4c414d5042415443), uint64Element(label), uint64Element(uint64(len(indices))))
 	context = append(context, roots...)
 	for _, idx := range indices {
 		context = append(context, uint64Element(uint64(idx)))

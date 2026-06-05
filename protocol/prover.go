@@ -3,7 +3,7 @@ package protocol
 import (
 	"reflect"
 
-	"github.com/Han-16/meow/crypto"
+	"github.com/Han-16/lamp/crypto"
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark-crypto/ecc/bn254"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"

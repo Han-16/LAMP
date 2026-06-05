@@ -1,7 +1,7 @@
 package protocol
 
 import (
-	"github.com/Han-16/meow/crypto"
+	"github.com/Han-16/lamp/crypto"
 	"github.com/consensys/gnark-crypto/ecc/bn254"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	"github.com/consensys/gnark/backend/groth16"

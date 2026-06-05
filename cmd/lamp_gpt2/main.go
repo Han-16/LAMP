@@ -9,12 +9,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Han-16/meow/benchmark"
-	"github.com/Han-16/meow/circuit"
-	"github.com/Han-16/meow/config"
-	"github.com/Han-16/meow/crypto"
-	"github.com/Han-16/meow/matrix"
-	"github.com/Han-16/meow/protocol"
+	"github.com/Han-16/lamp/benchmark"
+	"github.com/Han-16/lamp/circuit"
+	"github.com/Han-16/lamp/config"
+	"github.com/Han-16/lamp/crypto"
+	"github.com/Han-16/lamp/matrix"
+	"github.com/Han-16/lamp/protocol"
 
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark-crypto/ecc/bn254"
@@ -157,8 +157,8 @@ type preparedLayer struct {
 	outputTensor    *tensor
 	claims          []claimWitness
 	rsBatches       []rsBatchWitness
-	equalityChecks  []circuit.MeowGPT2EntryEqualityCheck
-	transposeChecks []circuit.MeowGPT2TransposeCheck
+	equalityChecks  []circuit.LAMPGPT2EntryEqualityCheck
+	transposeChecks []circuit.LAMPGPT2TransposeCheck
 
 	scalars          []fr.Element
 	scalarBlocks     [][]fr.Element
@@ -181,51 +181,51 @@ func main() {
 		log.Fatalf("failed to load .env: %v", err)
 	}
 
-	seqFlag := flag.Int("seq", config.GetInt("MEOW_GPT2_SEQ", 1), "Log2 sequence length")
-	rhoFlag := flag.String("rho", config.GetString("MEOW_GPT2_RHO", "1/2"), "Code rate, 1/2 or 1/4")
-	LFlag := flag.Int("L", config.GetInt("MEOW_GPT2_L", 1), "Number of sampled queries per matmul and wiring check")
-	linkerFlag := flag.String("linker", config.GetString("MEOW_GPT2_LINKER", linkerQANIZK), "CP-link backend: qa_nizk or qa_batch")
-	merkleFlag := flag.String("merkle", config.GetString("MEOW_GPT2_MERKLE", merkleSingle), "Merkle opening backend: single or multi")
-	allFlag := flag.Bool("all", config.GetBool("MEOW_GPT2_ALL", false), "Run benchmark range")
+	seqFlag := flag.Int("seq", config.GetInt("LAMP_GPT2_SEQ", 1), "Log2 sequence length")
+	rhoFlag := flag.String("rho", config.GetString("LAMP_GPT2_RHO", "1/2"), "Code rate, 1/2 or 1/4")
+	LFlag := flag.Int("L", config.GetInt("LAMP_GPT2_L", 1), "Number of sampled queries per matmul and wiring check")
+	linkerFlag := flag.String("linker", config.GetString("LAMP_GPT2_LINKER", linkerQANIZK), "CP-link backend: qa_nizk or qa_batch")
+	merkleFlag := flag.String("merkle", config.GetString("LAMP_GPT2_MERKLE", merkleSingle), "Merkle opening backend: single or multi")
+	allFlag := flag.Bool("all", config.GetBool("LAMP_GPT2_ALL", false), "Run benchmark range")
 	rangeFlag := flag.Bool("range", false, "Alias for -all")
-	fromFlag := flag.Int("from", config.GetInt("MEOW_GPT2_SEQ_FROM", 0), "First log2 sequence length when range mode is enabled")
-	toFlag := flag.Int("to", config.GetInt("MEOW_GPT2_SEQ_TO", 4), "Last log2 sequence length when range mode is enabled")
-	compileFlag := flag.Bool("compile", config.GetBool("MEOW_GPT2_ONLY_COMPILE", false), "Only compile the circuit to get constraints")
+	fromFlag := flag.Int("from", config.GetInt("LAMP_GPT2_SEQ_FROM", 0), "First log2 sequence length when range mode is enabled")
+	toFlag := flag.Int("to", config.GetInt("LAMP_GPT2_SEQ_TO", 4), "Last log2 sequence length when range mode is enabled")
+	compileFlag := flag.Bool("compile", config.GetBool("LAMP_GPT2_ONLY_COMPILE", false), "Only compile the circuit to get constraints")
 	flag.Parse()
 
-	outputDir := config.OutputDir("MEOW_GPT2_OUTPUT_DIR", filepath.Join("benchmark", "meow_gpt2"))
+	outputDir := config.OutputDir("LAMP_GPT2_OUTPUT_DIR", filepath.Join("benchmark", "lamp_gpt2"))
 	if err := benchmark.EnsureDir(outputDir); err != nil {
 		log.Fatalf("failed to create output directory: %v", err)
 	}
-	csvPath := filepath.Join(outputDir, "meow_gpt2_benchmark_results.csv")
-	file, writer := benchmark.InitMeowGPT2CSV(csvPath)
+	csvPath := filepath.Join(outputDir, "lamp_gpt2_benchmark_results.csv")
+	file, writer := benchmark.InitLAMPGPT2CSV(csvPath)
 	defer file.Close()
 
 	if *allFlag || *rangeFlag {
 		if *fromFlag > *toFlag {
 			log.Fatalf("invalid seq range: from=%d, to=%d", *fromFlag, *toFlag)
 		}
-		fmt.Printf("Running Meow GPT-2 range: seq=%d..%d, rho=%s, L=%d, linker=%s, merkle=%s\n", *fromFlag, *toFlag, *rhoFlag, *LFlag, normalizeLinker(*linkerFlag), normalizeMerkle(*merkleFlag))
+		fmt.Printf("Running LAMP GPT-2 range: seq=%d..%d, rho=%s, L=%d, linker=%s, merkle=%s\n", *fromFlag, *toFlag, *rhoFlag, *LFlag, normalizeLinker(*linkerFlag), normalizeMerkle(*merkleFlag))
 		for seqLog := *fromFlag; seqLog <= *toFlag; seqLog++ {
 			res := runExperiment(seqLog, *rhoFlag, *LFlag, *linkerFlag, *merkleFlag, *compileFlag)
-			benchmark.AppendMeowGPT2ResultToCSV(writer, res)
+			benchmark.AppendLAMPGPT2ResultToCSV(writer, res)
 			fmt.Println("----------------------------------------------------------------")
 		}
 		return
 	}
 
 	res := runExperiment(*seqFlag, *rhoFlag, *LFlag, *linkerFlag, *merkleFlag, *compileFlag)
-	benchmark.AppendMeowGPT2ResultToCSV(writer, res)
+	benchmark.AppendLAMPGPT2ResultToCSV(writer, res)
 }
 
-func runExperiment(seqLog int, rho string, L int, linker string, merkle string, onlyCompile bool) benchmark.MeowGPT2Result {
+func runExperiment(seqLog int, rho string, L int, linker string, merkle string, onlyCompile bool) benchmark.LAMPGPT2Result {
 	linker = normalizeLinker(linker)
 	merkle = normalizeMerkle(merkle)
 	if seqLog < 0 || L <= 0 {
 		log.Fatalf("invalid parameters: seq=%d L=%d", seqLog, L)
 	}
 	seqLen := 1 << seqLog
-	fmt.Printf("Meow GPT-2 medium packed-QKV layer: seq=2^%d=%d, rho=%s, L=%d, linker=%s, merkle=%s\n", seqLog, seqLen, rho, L, linker, merkle)
+	fmt.Printf("LAMP GPT-2 medium packed-QKV layer: seq=2^%d=%d, rho=%s, L=%d, linker=%s, merkle=%s\n", seqLog, seqLen, rho, L, linker, merkle)
 
 	var prep *preparedLayer
 	if onlyCompile {
@@ -239,13 +239,13 @@ func runExperiment(seqLog int, rho string, L int, linker string, merkle string, 
 	field := ecc.BN254.ScalarField()
 	r1csSystem, err := frontend.Compile(field, r1cs.NewBuilder, emptyCircuit)
 	if err != nil {
-		log.Fatalf("Meow GPT-2 compilation failed: %v", err)
+		log.Fatalf("LAMP GPT-2 compilation failed: %v", err)
 	}
 	nbConstraints := r1csSystem.GetNbConstraints()
 
 	if onlyCompile {
-		fmt.Printf("Meow GPT-2 circuit compiled. Constraints: %d\n", nbConstraints)
-		return benchmark.MeowGPT2Result{
+		fmt.Printf("LAMP GPT-2 circuit compiled. Constraints: %d\n", nbConstraints)
+		return benchmark.LAMPGPT2Result{
 			SeqLog:            seqLog,
 			SeqLen:            seqLen,
 			Rho:               rho,
@@ -266,7 +266,7 @@ func runExperiment(seqLog int, rho string, L int, linker string, merkle string, 
 	startSetup := time.Now()
 	pk, vk, err := groth16.Setup(r1csSystem)
 	if err != nil {
-		log.Fatalf("Meow GPT-2 setup failed: %v", err)
+		log.Fatalf("LAMP GPT-2 setup failed: %v", err)
 	}
 	circuitSetupTime := time.Since(startSetup).Seconds()
 	protocolSetupTime := prep.setupTime
@@ -317,7 +317,7 @@ func runExperiment(seqLog int, rho string, L int, linker string, merkle string, 
 	startCircuitProve := time.Now()
 	proof, err := groth16.Prove(r1csSystem, pk, proofWitness)
 	if err != nil {
-		log.Fatalf("Meow GPT-2 proof failed: %v", err)
+		log.Fatalf("LAMP GPT-2 proof failed: %v", err)
 	}
 	circuitProveTime := time.Since(startCircuitProve).Seconds()
 	cmVec2, blindingsIn := protocol.ExtractGroth16CommitmentsAndBlindings(proof)
@@ -368,7 +368,7 @@ func runExperiment(seqLog int, rho string, L int, linker string, merkle string, 
 	startVerify := time.Now()
 	startCircuitVerify := time.Now()
 	if err := groth16.Verify(proof, vk, publicWitness); err != nil {
-		log.Fatalf("Meow GPT-2 Groth16 verification failed: %v", err)
+		log.Fatalf("LAMP GPT-2 Groth16 verification failed: %v", err)
 	}
 	circuitVerifyTime := time.Since(startCircuitVerify).Seconds()
 
@@ -420,10 +420,10 @@ func runExperiment(seqLog int, rho string, L int, linker string, merkle string, 
 	totalProofSize := groth16ProofSize + merkleProofSize + cpLinkProofSize
 	totalProveTime := prep.commitTime + prep.merkleProveTime + circuitProveTime + cpLinkProveTime
 
-	fmt.Println("Meow GPT-2 proof verified successfully")
+	fmt.Println("LAMP GPT-2 proof verified successfully")
 	fmt.Printf("Proof sizes: Groth16=%d B, Merkle=%d B, CPLink=%d B, Total=%d B\n", groth16ProofSize, merkleProofSize, cpLinkProofSize, totalProofSize)
 
-	return benchmark.MeowGPT2Result{
+	return benchmark.LAMPGPT2Result{
 		SeqLog:            seqLog,
 		SeqLen:            seqLen,
 		Rho:               rho,
@@ -807,10 +807,10 @@ func (p *preparedLayer) addScoreValueRSBatches() {
 		log.Fatalf("expected %d value claims for RS batching, got %d", gpt2Heads, len(valueClaims))
 	}
 
-	p.addRSBatch("score.x", gpt2Dh, codewordLength(gpt2Dh, p.rho), scoreClaims, circuit.MeowGPT2RSSideX)
-	p.addRSBatch("score.yz", p.seqLen, codewordLength(p.seqLen, p.rho), scoreClaims, circuit.MeowGPT2RSSideYZ)
-	p.addRSBatch("value.x", p.seqLen, codewordLength(p.seqLen, p.rho), valueClaims, circuit.MeowGPT2RSSideX)
-	p.addRSBatch("value.yz", gpt2Dh, codewordLength(gpt2Dh, p.rho), valueClaims, circuit.MeowGPT2RSSideYZ)
+	p.addRSBatch("score.x", gpt2Dh, codewordLength(gpt2Dh, p.rho), scoreClaims, circuit.LAMPGPT2RSSideX)
+	p.addRSBatch("score.yz", p.seqLen, codewordLength(p.seqLen, p.rho), scoreClaims, circuit.LAMPGPT2RSSideYZ)
+	p.addRSBatch("value.x", p.seqLen, codewordLength(p.seqLen, p.rho), valueClaims, circuit.LAMPGPT2RSSideX)
+	p.addRSBatch("value.yz", gpt2Dh, codewordLength(gpt2Dh, p.rho), valueClaims, circuit.LAMPGPT2RSSideYZ)
 }
 
 func (p *preparedLayer) claimIndicesByPrefix(prefix string) []int {
@@ -854,7 +854,7 @@ func (p *preparedLayer) addRSBatch(name string, k, n int, claimIndices []int, si
 
 func (p *preparedLayer) markClaimRSBatched(claim *claimWitness, claimIndex int, side int, k int, n int, batchName string) {
 	switch side {
-	case circuit.MeowGPT2RSSideX:
+	case circuit.LAMPGPT2RSSideX:
 		if claim.spec.A.cols != k || codewordLength(claim.spec.A.cols, p.rho) != n {
 			log.Fatalf("invalid X-side domain for claim %s in RS batch %s", claim.spec.name, batchName)
 		}
@@ -862,7 +862,7 @@ func (p *preparedLayer) markClaimRSBatched(claim *claimWitness, claimIndex int, 
 			log.Fatalf("claim %s X-side was already assigned to an RS batch", claim.spec.name)
 		}
 		claim.skipRSX = true
-	case circuit.MeowGPT2RSSideYZ:
+	case circuit.LAMPGPT2RSSideYZ:
 		if claim.spec.C.cols != k || codewordLength(claim.spec.C.cols, p.rho) != n {
 			log.Fatalf("invalid YZ-side domain for claim %s in RS batch %s", claim.spec.name, batchName)
 		}
@@ -1008,7 +1008,7 @@ func (p *preparedLayer) addQKVSplitChecks(tensors []*tensor, L int) {
 			if err != nil {
 				log.Fatalf("failed to sample QKV split entry pairs for head %d part %d: %v", h, part, err)
 			}
-			check := circuit.MeowGPT2EntryEqualityCheck{
+			check := circuit.LAMPGPT2EntryEqualityCheck{
 				LeftGroup:    targets[part].group,
 				RightGroup:   QKV.group,
 				LeftBlocks:   make([]int, L),
@@ -1040,7 +1040,7 @@ func (p *preparedLayer) addTransposeChecks(tensors []*tensor, L int) {
 		if err != nil {
 			log.Fatalf("failed to sample transpose entry pairs for head %d: %v", h, err)
 		}
-		check := circuit.MeowGPT2TransposeCheck{
+		check := circuit.LAMPGPT2TransposeCheck{
 			LeftGroup:   K.group,
 			RightGroup:  KT.group,
 			LeftBlocks:  make([]int, L),
@@ -1072,7 +1072,7 @@ func (p *preparedLayer) addContextConcatChecks(tensors []*tensor, L int) {
 		if err != nil {
 			log.Fatalf("failed to sample context concat entry pairs for head %d: %v", h, err)
 		}
-		check := circuit.MeowGPT2EntryEqualityCheck{
+		check := circuit.LAMPGPT2EntryEqualityCheck{
 			LeftGroup:    Ctx.group,
 			RightGroup:   Context.group,
 			LeftBlocks:   make([]int, L),
@@ -1100,17 +1100,17 @@ func tensorMap(tensors []*tensor) map[string]*tensor {
 	return out
 }
 
-func buildCircuit(p *preparedLayer, assignment bool) *circuit.MeowGPT2Circuit {
-	claims := make([]circuit.MeowGPT2RectClaim, len(p.claims))
+func buildCircuit(p *preparedLayer, assignment bool) *circuit.LAMPGPT2Circuit {
+	claims := make([]circuit.LAMPGPT2RectClaim, len(p.claims))
 	for i := range p.claims {
 		claims[i] = buildCircuitClaim(p, &p.claims[i], assignment)
 	}
 	rsBatches := buildCircuitRSBatches(p, assignment)
 
-	c := &circuit.MeowGPT2Circuit{
+	c := &circuit.LAMPGPT2Circuit{
 		Input:        make([]frontend.Variable, p.seqLen*gpt2D),
 		Output:       make([]frontend.Variable, p.seqLen*gpt2D),
-		ColumnGroups: make([]circuit.MeowGPT2ColumnGroup, groupScalar),
+		ColumnGroups: make([]circuit.LAMPGPT2ColumnGroup, groupScalar),
 		Scalars:      make([]frontend.Variable, len(p.scalars)),
 		GroupRoots: [5]frontend.Variable{
 			p.extGroups[groupS].root,
@@ -1129,7 +1129,7 @@ func buildCircuit(p *preparedLayer, assignment bool) *circuit.MeowGPT2Circuit {
 
 	for groupID := 0; groupID < groupScalar; groupID++ {
 		sg := p.sampleGroups[groupID]
-		c.ColumnGroups[groupID] = circuit.MeowGPT2ColumnGroup{
+		c.ColumnGroups[groupID] = circuit.LAMPGPT2ColumnGroup{
 			BlockLen: sg.blockLen,
 			Blocks:   make([][]frontend.Variable, len(sg.blocks)),
 		}
@@ -1154,10 +1154,10 @@ func buildCircuit(p *preparedLayer, assignment bool) *circuit.MeowGPT2Circuit {
 	return c
 }
 
-func cloneEqualityChecks(src []circuit.MeowGPT2EntryEqualityCheck) []circuit.MeowGPT2EntryEqualityCheck {
-	out := make([]circuit.MeowGPT2EntryEqualityCheck, len(src))
+func cloneEqualityChecks(src []circuit.LAMPGPT2EntryEqualityCheck) []circuit.LAMPGPT2EntryEqualityCheck {
+	out := make([]circuit.LAMPGPT2EntryEqualityCheck, len(src))
 	for i := range src {
-		out[i] = circuit.MeowGPT2EntryEqualityCheck{
+		out[i] = circuit.LAMPGPT2EntryEqualityCheck{
 			LeftGroup:    src[i].LeftGroup,
 			RightGroup:   src[i].RightGroup,
 			LeftBlocks:   append([]int(nil), src[i].LeftBlocks...),
@@ -1169,10 +1169,10 @@ func cloneEqualityChecks(src []circuit.MeowGPT2EntryEqualityCheck) []circuit.Meo
 	return out
 }
 
-func cloneTransposeChecks(src []circuit.MeowGPT2TransposeCheck) []circuit.MeowGPT2TransposeCheck {
-	out := make([]circuit.MeowGPT2TransposeCheck, len(src))
+func cloneTransposeChecks(src []circuit.LAMPGPT2TransposeCheck) []circuit.LAMPGPT2TransposeCheck {
+	out := make([]circuit.LAMPGPT2TransposeCheck, len(src))
 	for i := range src {
-		out[i] = circuit.MeowGPT2TransposeCheck{
+		out[i] = circuit.LAMPGPT2TransposeCheck{
 			LeftGroup:   src[i].LeftGroup,
 			RightGroup:  src[i].RightGroup,
 			LeftBlocks:  append([]int(nil), src[i].LeftBlocks...),
@@ -1184,12 +1184,12 @@ func cloneTransposeChecks(src []circuit.MeowGPT2TransposeCheck) []circuit.MeowGP
 	return out
 }
 
-func buildCircuitRSBatches(p *preparedLayer, assignment bool) []circuit.MeowGPT2RSBatch {
-	out := make([]circuit.MeowGPT2RSBatch, len(p.rsBatches))
+func buildCircuitRSBatches(p *preparedLayer, assignment bool) []circuit.LAMPGPT2RSBatch {
+	out := make([]circuit.LAMPGPT2RSBatch, len(p.rsBatches))
 	for i := range p.rsBatches {
 		batch := &p.rsBatches[i]
 		d := p.cachedDomainBundle(batch.k, batch.n, !assignment)
-		out[i] = circuit.MeowGPT2RSBatch{
+		out[i] = circuit.LAMPGPT2RSBatch{
 			ID:       batch.id,
 			K:        batch.k,
 			N:        batch.n,
@@ -1197,10 +1197,10 @@ func buildCircuitRSBatches(p *preparedLayer, assignment bool) []circuit.MeowGPT2
 			WeightsK: d.weightsK,
 			DomainN:  d.domainN,
 			WeightsN: d.weightsN,
-			Terms:    make([]circuit.MeowGPT2RSBatchTerm, len(batch.terms)),
+			Terms:    make([]circuit.LAMPGPT2RSBatchTerm, len(batch.terms)),
 		}
 		for j := range batch.terms {
-			out[i].Terms[j] = circuit.MeowGPT2RSBatchTerm{
+			out[i].Terms[j] = circuit.LAMPGPT2RSBatchTerm{
 				ClaimIndex: batch.terms[j].claimIndex,
 				Side:       batch.terms[j].side,
 			}
@@ -1212,14 +1212,14 @@ func buildCircuitRSBatches(p *preparedLayer, assignment bool) []circuit.MeowGPT2
 	return out
 }
 
-func buildCircuitClaim(p *preparedLayer, w *claimWitness, assignment bool) circuit.MeowGPT2RectClaim {
+func buildCircuitClaim(p *preparedLayer, w *claimWitness, assignment bool) circuit.LAMPGPT2RectClaim {
 	spec := w.spec
 	rows, inner, cols := spec.A.rows, spec.A.cols, spec.C.cols
 	NIn, NOut := codewordLength(inner, p.rho), codewordLength(cols, p.rho)
 	dIn := p.cachedDomainBundle(inner, NIn, !assignment)
 	dOut := p.cachedDomainBundle(cols, NOut, !assignment)
 
-	claim := circuit.MeowGPT2RectClaim{
+	claim := circuit.LAMPGPT2RectClaim{
 		ID: spec.id, Rows: rows, Inner: inner, Cols: cols, NIn: NIn, NOut: NOut,
 		DomainKIn: dIn.domainK, WeightsKIn: dIn.weightsK, DomainNIn: dIn.domainN, WeightsNIn: dIn.weightsN,
 		DomainKOut: dOut.domainK, WeightsKOut: dOut.weightsK, DomainNOut: dOut.domainN, WeightsNOut: dOut.weightsN,

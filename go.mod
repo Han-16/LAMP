@@ -1,4 +1,4 @@
-module github.com/Han-16/meow
+module github.com/Han-16/lamp
 
 go 1.25.6
 

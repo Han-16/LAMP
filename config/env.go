@@ -10,7 +10,7 @@ import (
 )
 
 func LoadDotEnv() error {
-	if explicitPath := os.Getenv("MEOW_ENV_FILE"); explicitPath != "" {
+	if explicitPath := os.Getenv("LAMP_ENV_FILE"); explicitPath != "" {
 		return loadDotEnvFile(explicitPath, true)
 	}
 
