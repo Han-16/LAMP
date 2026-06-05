@@ -10,7 +10,7 @@ set -a
 . ./.env
 set +a
 
-image="${LAMPGO_DOCKER_IMAGE:-lampgo}"
+image="${LAMP_DOCKER_IMAGE:-lamp}"
 
 usage() {
 	echo "usage: scripts/run_bench.sh [lamp|freivalds|all] [--range] [flags...]" >&2

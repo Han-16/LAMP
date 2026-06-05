@@ -1,4 +1,4 @@
-# LAMPGo Quick Start
+# LAMP Quick Start
 
 This repository contains Go implementations for LAMP: Linear Verification of
 Matrix Multiplication via Proximity Testing, along with Freivalds baselines over
