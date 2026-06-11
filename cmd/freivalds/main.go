@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
 	"log"
@@ -149,6 +150,13 @@ func runExperiment(logK int, onlyCompile bool) benchmark.FreivaldsResult {
 	proveTime := time.Since(startProve).Seconds()
 	fmt.Printf("   ✅ Prove Time: %s\n", benchmark.FormatDurationSeconds(proveTime))
 
+	var proofBuf bytes.Buffer
+	if _, err := proof.WriteTo(&proofBuf); err != nil {
+		log.Fatalf("❌ Proof serialization failed: %v", err)
+	}
+	proofSize := proofBuf.Len()
+	fmt.Printf("   📦 Proof Size: %d B\n", proofSize)
+
 	// =========================================================================
 	// 4. Verification
 	// =========================================================================
@@ -175,6 +183,7 @@ func runExperiment(logK int, onlyCompile bool) benchmark.FreivaldsResult {
 		SetupTime:         setupTime,
 		ProveTime:         proveTime,
 		VerifyTime:        verifyTime,
+		ProofSize:         proofSize,
 	}
 }
 

@@ -185,7 +185,7 @@ func main() {
 	rhoFlag := flag.String("rho", config.GetString("LAMP_GPT2_RHO", "1/2"), "Code rate, 1/2 or 1/4")
 	LFlag := flag.Int("L", config.GetInt("LAMP_GPT2_L", 1), "Number of sampled queries per matmul and wiring check")
 	linkerFlag := flag.String("linker", config.GetString("LAMP_GPT2_LINKER", linkerQANIZK), "CP-link backend: qa_nizk or qa_batch")
-	merkleFlag := flag.String("merkle", config.GetString("LAMP_GPT2_MERKLE", merkleSingle), "Merkle opening backend: single or multi")
+	merkleFlag := flag.String("merkle", config.GetString("LAMP_GPT2_MERKLE", merkleMulti), "Merkle opening backend: single or multi")
 	allFlag := flag.Bool("all", config.GetBool("LAMP_GPT2_ALL", false), "Run benchmark range")
 	rangeFlag := flag.Bool("range", false, "Alias for -all")
 	fromFlag := flag.Int("from", config.GetInt("LAMP_GPT2_SEQ_FROM", 0), "First log2 sequence length when range mode is enabled")
@@ -1459,14 +1459,16 @@ func normalizeLinker(linker string) string {
 
 func normalizeMerkle(merkle string) string {
 	switch strings.ToLower(strings.TrimSpace(merkle)) {
-	case "", merkleSingle:
+	case "":
+		return merkleMulti
+	case merkleSingle:
 		return merkleSingle
 	case merkleMulti:
 		return merkleMulti
 	default:
 		log.Fatalf("unsupported merkle opening %q; use %q or %q", merkle, merkleSingle, merkleMulti)
 	}
-	return merkleSingle
+	return merkleMulti
 }
 
 func appendMerkleOpeningContext(context []fr.Element, leafIdx int, meta crypto.MerkleLeafMeta) []fr.Element {

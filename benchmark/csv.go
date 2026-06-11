@@ -53,6 +53,18 @@ type FreivaldsResult struct {
 	SetupTime         float64
 	ProveTime         float64
 	VerifyTime        float64
+	ProofSize         int
+}
+
+type FreivaldsBatchResult struct {
+	LogK              int
+	Batch             int
+	MatrixComputeTime float64
+	Constraints       int
+	SetupTime         float64
+	ProveTime         float64
+	VerifyTime        float64
+	ProofSize         int
 }
 
 type LAMPResult struct {
@@ -60,6 +72,36 @@ type LAMPResult struct {
 	Rho               string
 	Linker            string
 	Merkle            string
+	N                 int
+	NumQueries        int // L
+	Constraints       int
+	MatrixComputeTime float64
+	SetupTime         float64
+	ProtocolSetupTime float64
+	CircuitSetupTime  float64
+	CPLinkSetupTime   float64
+	MatrixCommitTime  float64
+	VectorCommitTime  float64
+	MerkleProveTime   float64
+	CircuitProveTime  float64
+	CPLinkProveTime   float64
+	TotalProveTime    float64
+	CircuitVerifyTime float64
+	MerkleVerifyTime  float64
+	CPLinkVerifyTime  float64
+	TotalVerifyTime   float64
+	MerkleProofSize   int
+	Groth16ProofSize  int
+	CPLinkProofSize   int
+	TotalProofSize    int
+}
+
+type LAMPBATCHResult struct {
+	LogK              int
+	Rho               string
+	Linker            string
+	Merkle            string
+	Batch             int
 	N                 int
 	NumQueries        int // L
 	Constraints       int
@@ -123,12 +165,13 @@ type FreivaldsGPT2Result struct {
 	SetupTime         float64
 	ProveTime         float64
 	VerifyTime        float64
+	ProofSize         int
 }
 
 // --- Freivalds Benchmark ---
 func InitFreivaldsCSV(filename string) (*os.File, *csv.Writer) {
 	return initCSV(filename, []string{
-		"log(K)", "Constraint", "MatrixComputeTime (s/ms)", "Setup (s/ms)", "Prove (s/ms)", "Verify (s/ms)",
+		"log(K)", "Constraint", "MatrixComputeTime (s/ms)", "Setup (s/ms)", "Prove (s/ms)", "Verify (s/ms)", "ProofSize(B)",
 	})
 }
 
@@ -140,8 +183,29 @@ func AppendFreivaldsResultToCSV(writer *csv.Writer, res FreivaldsResult) {
 		formatSeconds(res.SetupTime),
 		formatSeconds(res.ProveTime),
 		formatSeconds(res.VerifyTime),
+		strconv.Itoa(res.ProofSize),
 	}
 	appendCSV(writer, record, fmt.Sprintf("logK=%d", res.LogK))
+}
+
+func InitFreivaldsBatchCSV(filename string) (*os.File, *csv.Writer) {
+	return initCSV(filename, []string{
+		"log(K)", "Batch", "Constraint", "MatrixComputeTime (s/ms)", "Setup (s/ms)", "Prove (s/ms)", "Verify (s/ms)", "ProofSize(B)",
+	})
+}
+
+func AppendFreivaldsBatchResultToCSV(writer *csv.Writer, res FreivaldsBatchResult) {
+	record := []string{
+		strconv.Itoa(res.LogK),
+		strconv.Itoa(res.Batch),
+		strconv.Itoa(res.Constraints),
+		formatSeconds(res.MatrixComputeTime),
+		formatSeconds(res.SetupTime),
+		formatSeconds(res.ProveTime),
+		formatSeconds(res.VerifyTime),
+		strconv.Itoa(res.ProofSize),
+	}
+	appendCSV(writer, record, fmt.Sprintf("Freivalds batch: logK=%d, batch=%d, constraints=%d", res.LogK, res.Batch, res.Constraints))
 }
 
 func InitLAMPCSV(filename string) (*os.File, *csv.Writer) {
@@ -186,6 +250,51 @@ func AppendLAMPResultToCSV(writer *csv.Writer, res LAMPResult) {
 		strconv.Itoa(res.TotalProofSize),
 	}
 	appendCSV(writer, record, fmt.Sprintf("LAMP Protocol: logK=%d, rho=%s, linker=%s, merkle=%s, L=%d, constraints=%d", res.LogK, res.Rho, res.Linker, res.Merkle, res.NumQueries, res.Constraints))
+}
+
+func InitLAMPBATCHCSV(filename string) (*os.File, *csv.Writer) {
+	return initCSV(filename, []string{
+		"LogK", "Rho", "Linker", "Merkle", "Batch", "N", "NumQueries", "Constraints",
+		"MatrixComputeTime(s/ms)", "SetupTime(s/ms)",
+		"ProtocolSetupTime(s/ms)", "CircuitSetupTime(s/ms)", "CPLinkSetupTime(s/ms)",
+		"MatrixCommitTime(s/ms)", "VectorCommitTime(s/ms)", "MerkleProveTime(s/ms)", "CircuitProveTime(s/ms)",
+		"CPLinkProveTime(s/ms)", "TotalProveTime(s/ms)",
+		"CircuitVerifyTime(s/ms)", "MerkleVerifyTime(s/ms)", "CPLinkVerifyTime(s/ms)", "TotalVerifyTime(s/ms)",
+		"MerkleProofSize(B)", "Groth16ProofSize(B)", "CPLinkProofSize(B)", "TotalProofSize(B)",
+	})
+}
+
+func AppendLAMPBATCHResultToCSV(writer *csv.Writer, res LAMPBATCHResult) {
+	record := []string{
+		strconv.Itoa(res.LogK),
+		res.Rho,
+		res.Linker,
+		res.Merkle,
+		strconv.Itoa(res.Batch),
+		strconv.Itoa(res.N),
+		strconv.Itoa(res.NumQueries),
+		strconv.Itoa(res.Constraints),
+		formatSeconds(res.MatrixComputeTime),
+		formatSeconds(res.SetupTime),
+		formatSeconds(res.ProtocolSetupTime),
+		formatSeconds(res.CircuitSetupTime),
+		formatSeconds(res.CPLinkSetupTime),
+		formatSeconds(res.MatrixCommitTime),
+		formatSeconds(res.VectorCommitTime),
+		formatSeconds(res.MerkleProveTime),
+		formatSeconds(res.CircuitProveTime),
+		formatSeconds(res.CPLinkProveTime),
+		formatSeconds(res.TotalProveTime),
+		formatSeconds(res.CircuitVerifyTime),
+		formatSeconds(res.MerkleVerifyTime),
+		formatSeconds(res.CPLinkVerifyTime),
+		formatSeconds(res.TotalVerifyTime),
+		strconv.Itoa(res.MerkleProofSize),
+		strconv.Itoa(res.Groth16ProofSize),
+		strconv.Itoa(res.CPLinkProofSize),
+		strconv.Itoa(res.TotalProofSize),
+	}
+	appendCSV(writer, record, fmt.Sprintf("LAMPBATCH Protocol: logK=%d, rho=%s, linker=%s, merkle=%s, L=%d, batch=%d, constraints=%d", res.LogK, res.Rho, res.Linker, res.Merkle, res.NumQueries, res.Batch, res.Constraints))
 }
 
 func InitLAMPGPT2CSV(filename string) (*os.File, *csv.Writer) {
@@ -236,7 +345,7 @@ func AppendLAMPGPT2ResultToCSV(writer *csv.Writer, res LAMPGPT2Result) {
 func InitFreivaldsGPT2CSV(filename string) (*os.File, *csv.Writer) {
 	return initCSV(filename, []string{
 		"SeqLog", "SeqLen", "NumClaims", "Constraints",
-		"MatrixComputeTime(s/ms)", "SetupTime(s/ms)", "ProveTime(s/ms)", "VerifyTime(s/ms)",
+		"MatrixComputeTime(s/ms)", "SetupTime(s/ms)", "ProveTime(s/ms)", "VerifyTime(s/ms)", "ProofSize(B)",
 	})
 }
 
@@ -250,6 +359,7 @@ func AppendFreivaldsGPT2ResultToCSV(writer *csv.Writer, res FreivaldsGPT2Result)
 		formatSeconds(res.SetupTime),
 		formatSeconds(res.ProveTime),
 		formatSeconds(res.VerifyTime),
+		strconv.Itoa(res.ProofSize),
 	}
 	appendCSV(writer, record, fmt.Sprintf("Freivalds GPT-2 medium layer: seq=2^%d, claims=%d, constraints=%d", res.SeqLog, res.NumClaims, res.Constraints))
 }

@@ -44,7 +44,7 @@ func main() {
 	logKFlag := flag.Int("K", config.GetInt("LAMP_LOG_K", 10), "Log base 2 of K")
 	rhoFlag := flag.String("rho", config.GetString("LAMP_RHO", "1/2"), "Code rate")
 	LFlag := flag.Int("L", config.GetInt("LAMP_L", 128), "Number of unique indices L")
-	merkleFlag := flag.String("merkle", config.GetString("LAMP_MERKLE", merkleSingle), "Merkle opening backend: single or multi")
+	merkleFlag := flag.String("merkle", config.GetString("LAMP_MERKLE", merkleMulti), "Merkle opening backend: single or multi")
 	allFlag := flag.Bool("all", config.GetBool("LAMP_ALL", false), "Run benchmark range")
 	fromFlag := flag.Int("from", config.GetInt("LAMP_LOG_K_FROM", 7), "First logK when -all is enabled")
 	toFlag := flag.Int("to", config.GetInt("LAMP_LOG_K_TO", 20), "Last logK when -all is enabled")
@@ -544,14 +544,16 @@ func runExperiment(logK int, rhoStr string, L int, merkle string, onlyCompile bo
 
 func normalizeMerkle(merkle string) string {
 	switch strings.ToLower(strings.TrimSpace(merkle)) {
-	case "", merkleSingle:
+	case "":
+		return merkleMulti
+	case merkleSingle:
 		return merkleSingle
 	case merkleMulti:
 		return merkleMulti
 	default:
 		log.Fatalf("unsupported merkle opening %q; use %q or %q", merkle, merkleSingle, merkleMulti)
 	}
-	return merkleSingle
+	return merkleMulti
 }
 
 func selectCommitments(leaves []bn254.G1Affine, indices []int) []bn254.G1Affine {

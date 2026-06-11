@@ -9,7 +9,11 @@ experiments.
 Implemented experiments:
 
 - `lamp`: square matrix multiplication with the LAMP protocol.
+- `lamp_batch`: random-linear-combination batch LAMP for multiple square
+  matrix multiplications.
 - `freivalds`: square matrix multiplication Freivalds baseline.
+- `freivalds_batch`: batched Freivalds baseline for multiple square matrix
+  multiplications in one Groth16 proof.
 - `lamp_gpt2`: LAMP benchmark for one GPT-2 medium matmul-only layer.
 - `freivalds_gpt2`: Freivalds baseline for the same GPT-2 matmul-only layer.
 
@@ -74,10 +78,17 @@ The square LAMP benchmark uses the QA-batch CP-link backend and supports two Mer
 sh scripts/run_bench.sh lamp --K 10 --rho 1/2 --L 128 --merkle multi
 ```
 
+Square LAMP batch:
+
+```sh
+sh scripts/run_bench.sh lamp_batch --K 10 --rho 1/2 --L 128 --batch 5 --merkle multi
+```
+
 Square Freivalds:
 
 ```sh
 sh scripts/run_bench.sh freivalds --K 10
+sh scripts/run_bench.sh freivalds_batch --K 7 --batch 5
 ```
 
 GPT-2 LAMP:
@@ -108,7 +119,9 @@ Square LAMP and Freivalds:
 
 ```sh
 sh scripts/run_bench.sh lamp --range --compile
+sh scripts/run_bench.sh lamp_batch --K 10 --batch-range --batch-from 1 --batch-to 10 --compile
 sh scripts/run_bench.sh freivalds --range --compile
+sh scripts/run_bench.sh freivalds_batch --K 7 --batch-range --batch-from 1 --batch-to 10 --compile
 sh scripts/run_bench.sh all --range --compile
 ```
 
@@ -133,7 +146,9 @@ Benchmark CSV files are written under:
 
 ```text
 benchmark/lamp/
+benchmark/lamp_batch/
 benchmark/freivalds/
+benchmark/freivalds_batch/
 benchmark/lamp_gpt2/
 benchmark/freivalds_gpt2/
 ```
@@ -152,5 +167,7 @@ If Go `1.25.6` is available locally, the Docker scripts are not required:
 ```sh
 go test ./...
 go run ./cmd/lamp --K 10 --rho 1/2 --L 128 --compile
+go run ./cmd/lamp_batch --K 10 --rho 1/2 --L 128 --batch 5 --compile
+go run ./cmd/freivalds_batch --K 7 --batch 5 --compile
 go run ./cmd/lamp_gpt2 --seq 7 --rho 1/2 --L 128 --compile
 ```

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
 	"log"
@@ -169,6 +170,13 @@ func runExperiment(seqLog int, onlyCompile bool) benchmark.FreivaldsGPT2Result {
 	}
 	proveTime := time.Since(startProve).Seconds()
 
+	var proofBuf bytes.Buffer
+	if _, err := proof.WriteTo(&proofBuf); err != nil {
+		log.Fatalf("Freivalds GPT-2 proof serialization failed: %v", err)
+	}
+	proofSize := proofBuf.Len()
+	fmt.Printf("Freivalds GPT-2 proof size: %d B\n", proofSize)
+
 	publicWitness, err := witness.Public()
 	if err != nil {
 		log.Fatalf("failed to build public witness: %v", err)
@@ -190,6 +198,7 @@ func runExperiment(seqLog int, onlyCompile bool) benchmark.FreivaldsGPT2Result {
 		SetupTime:         setupTime,
 		ProveTime:         proveTime,
 		VerifyTime:        verifyTime,
+		ProofSize:         proofSize,
 	}
 }
 
