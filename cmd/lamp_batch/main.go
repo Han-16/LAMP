@@ -27,7 +27,7 @@ import (
 )
 
 const (
-	linkerQABatch = "qa_batch"
+	linkerQALink = "qa_link"
 )
 
 const (
@@ -131,7 +131,7 @@ func runExperiment(logK int, rhoStr string, L int, batch int, onlyCompile bool) 
 	depth := int(math.Log2(float64(N)))
 	field := ecc.BN254.ScalarField()
 
-	fmt.Printf("🔥 [LAMPBATCH Protocol] logK=%d, K=%d, N=%d, L=%d, batch=%d, linker=%s, merkle=%s\n", logK, K, N, L, batch, linkerQABatch, merkle)
+	fmt.Printf("🔥 [LAMPBATCH Protocol] logK=%d, K=%d, N=%d, L=%d, batch=%d, linker=%s, merkle=%s\n", logK, K, N, L, batch, linkerQALink, merkle)
 
 	if onlyCompile {
 		fmt.Println("=== 🔍 Compiling LAMPBATCH Circuit for Constraints ===")
@@ -149,7 +149,7 @@ func runExperiment(logK int, rhoStr string, L int, batch int, onlyCompile bool) 
 		return benchmark.LAMPBATCHResult{
 			LogK:        logK,
 			Rho:         rhoStr,
-			Linker:      linkerQABatch,
+			Linker:      linkerQALink,
 			Merkle:      merkle,
 			Batch:       batch,
 			N:           N,
@@ -278,13 +278,13 @@ func runExperiment(logK int, rhoStr string, L int, batch int, onlyCompile bool) 
 	}
 
 	startCPLinkSetup := time.Now()
-	columnQABatchPK, columnQABatchVK, err := crypto.SetupQABatchLink(L, 3*batch*K, proverWithPK.CK2[columnCommitIndex], ckABC)
+	columnLinkPK, columnLinkVK, err := crypto.SetupQALink(L, 3*batch*K, proverWithPK.CK2[columnCommitIndex], ckABC)
 	if err != nil {
-		log.Fatalf("❌ Column QA-batch setup failed: %v", err)
+		log.Fatalf("❌ Column QA-link setup failed: %v", err)
 	}
-	scalarQABatchPK, scalarQABatchVK, err := crypto.SetupQABatchLink(L, batch+1, proverWithPK.CK2[scalarCommitIndex], ckXYZ)
+	scalarLinkPK, scalarLinkVK, err := crypto.SetupQALink(L, batch+1, proverWithPK.CK2[scalarCommitIndex], ckXYZ)
 	if err != nil {
-		log.Fatalf("❌ Scalar QA-batch setup failed: %v", err)
+		log.Fatalf("❌ Scalar QA-link setup failed: %v", err)
 	}
 	cpLinkSetupTime += time.Since(startCPLinkSetup).Seconds()
 	setupTime := protocolSetupTime + circuitSetupTime + cpLinkSetupTime
@@ -316,32 +316,23 @@ func runExperiment(logK int, rhoStr string, L int, batch int, onlyCompile bool) 
 	columnBlocks, columnExternalCommitments, columnExternalBlindings := selectBlocksAndOpenings(abcBlocks, leavesABC, blABC, indices)
 	scalarBlocks, scalarExternalCommitments, scalarExternalBlindings := selectBlocksAndOpenings(xyzBlocks, leavesXYZ, blXYZ, indices)
 
-	columnContext := lampBatchQABatchContext(1, []fr.Element{rootABC}, indices, batch, K, N, L)
-	scalarContext := lampBatchQABatchContext(2, []fr.Element{rootXYZ}, indices, batch, K, N, L)
-
-	columnQABatchProof, err := crypto.ProveQABatchLink(
+	columnLinkProof, err := crypto.ProveQALink(
 		columnBlocks,
 		blindingsIn[columnCommitIndex],
 		columnExternalBlindings,
-		columnQABatchPK,
-		cmVec2[columnCommitIndex],
-		columnExternalCommitments,
-		columnContext...,
+		columnLinkPK,
 	)
 	if err != nil {
-		log.Fatalf("❌ Column QA-batch proof failed: %v", err)
+		log.Fatalf("❌ Column QA-link proof failed: %v", err)
 	}
-	scalarQABatchProof, err := crypto.ProveQABatchLink(
+	scalarLinkProof, err := crypto.ProveQALink(
 		scalarBlocks,
 		blindingsIn[scalarCommitIndex],
 		scalarExternalBlindings,
-		scalarQABatchPK,
-		cmVec2[scalarCommitIndex],
-		scalarExternalCommitments,
-		scalarContext...,
+		scalarLinkPK,
 	)
 	if err != nil {
-		log.Fatalf("❌ Scalar QA-batch proof failed: %v", err)
+		log.Fatalf("❌ Scalar QA-link proof failed: %v", err)
 	}
 	cpLinkProveTime := time.Since(startCPLinkProve).Seconds()
 
@@ -370,11 +361,22 @@ func runExperiment(logK int, rhoStr string, L int, batch int, onlyCompile bool) 
 	merkleVerifyTime := time.Since(startMerkleVerify).Seconds()
 
 	startCPLinkVerify := time.Now()
-	if !crypto.VerifyQABatchLink(cmVec2[columnCommitIndex], columnExternalCommitments, columnQABatchProof, columnQABatchVK, columnContext...) {
-		log.Fatal("❌ Column QA-batch link failed")
+	linkChecks := []crypto.QALinkVerification{
+		{
+			SnarkCommit:     cmVec2[columnCommitIndex],
+			ExternalCommits: columnExternalCommitments,
+			Proof:           columnLinkProof,
+			VK:              columnLinkVK,
+		},
+		{
+			SnarkCommit:     cmVec2[scalarCommitIndex],
+			ExternalCommits: scalarExternalCommitments,
+			Proof:           scalarLinkProof,
+			VK:              scalarLinkVK,
+		},
 	}
-	if !crypto.VerifyQABatchLink(cmVec2[scalarCommitIndex], scalarExternalCommitments, scalarQABatchProof, scalarQABatchVK, scalarContext...) {
-		log.Fatal("❌ Scalar QA-batch link failed")
+	if !crypto.VerifyQALinksBatched(linkChecks, lampBatchLinkContext([]fr.Element{rootABC, rootXYZ}, indices, batch, K, N, L)...) {
+		log.Fatal("❌ Batched QA-link verification failed")
 	}
 	cpLinkVerifyTime := time.Since(startCPLinkVerify).Seconds()
 
@@ -392,7 +394,7 @@ func runExperiment(logK int, rhoStr string, L int, batch int, onlyCompile bool) 
 		crypto.MerkleMultiProofSizeBytes(mmpXYZ) +
 		L*2*crypto.G1AffineSizeBytes
 
-	cpLinkProofSize := crypto.QABatchLinkProofSizeBytes(columnQABatchProof) + crypto.QABatchLinkProofSizeBytes(scalarQABatchProof)
+	cpLinkProofSize := crypto.QALinkProofSizeBytes(columnLinkProof) + crypto.QALinkProofSizeBytes(scalarLinkProof)
 	totalProofSize := groth16ProofSize + merkleProofSize + cpLinkProofSize
 
 	fmt.Printf("📊 Proof Sizes -> Groth16: %d B, Merkle: %d B, CPLink: %d B | Total: %d B\n",
@@ -401,7 +403,7 @@ func runExperiment(logK int, rhoStr string, L int, batch int, onlyCompile bool) 
 	return benchmark.LAMPBATCHResult{
 		LogK:              logK,
 		Rho:               rhoStr,
-		Linker:            linkerQABatch,
+		Linker:            linkerQALink,
 		Merkle:            merkle,
 		Batch:             batch,
 		N:                 N,
@@ -655,12 +657,11 @@ func selectCommitments(leaves []bn254.G1Affine, indices []int) []bn254.G1Affine 
 	return out
 }
 
-func lampBatchQABatchContext(label uint64, roots []fr.Element, indices []int, batch, K, N, L int) []fr.Element {
-	context := make([]fr.Element, 0, 8+len(roots)+len(indices))
+func lampBatchLinkContext(roots []fr.Element, indices []int, batch, K, N, L int) []fr.Element {
+	context := make([]fr.Element, 0, 7+len(roots)+len(indices))
 	context = append(
 		context,
-		uint64Element(0x4c414d5042415443), // "LAMPBATC"
-		uint64Element(label),
+		uint64Element(0x4c414d504c494e4b), // "LAMPLINK"
 		uint64Element(uint64(batch)),
 		uint64Element(uint64(K)),
 		uint64Element(uint64(N)),

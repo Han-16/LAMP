@@ -38,8 +38,8 @@ const (
 )
 
 const (
-	linkerQABatch = "qa_batch"
-	merkleMulti   = "multi"
+	linkerQALink = "qa_link"
+	merkleMulti  = "multi"
 )
 
 const (
@@ -198,7 +198,7 @@ func main() {
 		if *fromFlag > *toFlag {
 			log.Fatalf("invalid seq range: from=%d, to=%d", *fromFlag, *toFlag)
 		}
-		fmt.Printf("Running LAMP GPT-2 range: seq=%d..%d, rho=%s, L=%d, linker=%s, merkle=%s\n", *fromFlag, *toFlag, *rhoFlag, *LFlag, linkerQABatch, merkleMulti)
+		fmt.Printf("Running LAMP GPT-2 range: seq=%d..%d, rho=%s, L=%d, linker=%s, merkle=%s\n", *fromFlag, *toFlag, *rhoFlag, *LFlag, linkerQALink, merkleMulti)
 		for seqLog := *fromFlag; seqLog <= *toFlag; seqLog++ {
 			res := runExperiment(seqLog, *rhoFlag, *LFlag, *compileFlag)
 			benchmark.AppendLAMPGPT2ResultToCSV(writer, res)
@@ -212,7 +212,7 @@ func main() {
 }
 
 func runExperiment(seqLog int, rho string, L int, onlyCompile bool) benchmark.LAMPGPT2Result {
-	linker := linkerQABatch
+	linker := linkerQALink
 	merkle := merkleMulti
 	if seqLog < 0 || L <= 0 {
 		log.Fatalf("invalid parameters: seq=%d L=%d", seqLog, L)
@@ -274,17 +274,17 @@ func runExperiment(seqLog int, rho string, L int, onlyCompile bool) benchmark.LA
 	}
 
 	cpLinkSetupTime := 0.0
-	qaBatchProvingKeys := make([]crypto.QABatchLinkProvingKey, numGroups)
-	qaBatchVerifyingKeys := make([]crypto.QABatchLinkVerifyingKey, numGroups)
+	linkProvingKeys := make([]crypto.QALinkProvingKey, numGroups)
+	linkVerifyingKeys := make([]crypto.QALinkVerifyingKey, numGroups)
 	startCPLinkSetup := time.Now()
 	for groupID := 0; groupID < numGroups; groupID++ {
 		blocks, _, _ := prep.sampleCPLinkData(groupID)
-		qaPK, qaVK, err := crypto.SetupQABatchLink(len(blocks), prep.extGroups[groupID].blockLen, prover.CK2[groupID], prep.extGroups[groupID].ck)
+		linkPK, linkVK, err := crypto.SetupQALink(len(blocks), prep.extGroups[groupID].blockLen, prover.CK2[groupID], prep.extGroups[groupID].ck)
 		if err != nil {
-			log.Fatalf("group %d QA-batch setup failed: %v", groupID, err)
+			log.Fatalf("group %d QA-link setup failed: %v", groupID, err)
 		}
-		qaBatchProvingKeys[groupID] = qaPK
-		qaBatchVerifyingKeys[groupID] = qaVK
+		linkProvingKeys[groupID] = linkPK
+		linkVerifyingKeys[groupID] = linkVK
 	}
 	cpLinkSetupTime = time.Since(startCPLinkSetup).Seconds()
 	setupTime := protocolSetupTime + circuitSetupTime + cpLinkSetupTime
@@ -305,22 +305,19 @@ func runExperiment(seqLog int, rho string, L int, onlyCompile bool) benchmark.LA
 	}
 
 	startOffline := time.Now()
-	qaBatchLinkProofs := make([]crypto.QABatchLinkProof, numGroups)
+	linkProofs := make([]crypto.QALinkProof, numGroups)
 	for groupID := 0; groupID < numGroups; groupID++ {
-		blocks, commits, blindings := prep.sampleCPLinkData(groupID)
-		linkProof, err := crypto.ProveQABatchLink(
+		blocks, _, blindings := prep.sampleCPLinkData(groupID)
+		linkProof, err := crypto.ProveQALink(
 			blocks,
 			blindingsIn[groupID],
 			blindings,
-			qaBatchProvingKeys[groupID],
-			cmVec2[groupID],
-			commits,
-			prep.qaBatchContext(groupID)...,
+			linkProvingKeys[groupID],
 		)
 		if err != nil {
-			log.Fatalf("group %d QA-batch link proof failed: %v", groupID, err)
+			log.Fatalf("group %d QA-link proof failed: %v", groupID, err)
 		}
-		qaBatchLinkProofs[groupID] = linkProof
+		linkProofs[groupID] = linkProof
 	}
 	cpLinkProveTime := time.Since(startOffline).Seconds()
 
@@ -345,11 +342,18 @@ func runExperiment(seqLog int, rho string, L int, onlyCompile bool) benchmark.LA
 	merkleVerifyTime := time.Since(startMerkle).Seconds()
 
 	startCPLink := time.Now()
+	linkChecks := make([]crypto.QALinkVerification, 0, numGroups)
 	for groupID := 0; groupID < numGroups; groupID++ {
 		_, commits, _ := prep.sampleCPLinkData(groupID)
-		if !crypto.VerifyQABatchLink(cmVec2[groupID], commits, qaBatchLinkProofs[groupID], qaBatchVerifyingKeys[groupID], prep.qaBatchContext(groupID)...) {
-			log.Fatalf("group %d QA-batch link verification failed", groupID)
-		}
+		linkChecks = append(linkChecks, crypto.QALinkVerification{
+			SnarkCommit:     cmVec2[groupID],
+			ExternalCommits: commits,
+			Proof:           linkProofs[groupID],
+			VK:              linkVerifyingKeys[groupID],
+		})
+	}
+	if !crypto.VerifyQALinksBatched(linkChecks, prep.linkBatchContext()...) {
+		log.Fatal("batched QA-link verification failed")
 	}
 	cpLinkVerifyTime := time.Since(startCPLink).Seconds()
 	totalVerifyTime := time.Since(startVerify).Seconds()
@@ -359,8 +363,8 @@ func runExperiment(seqLog int, rho string, L int, onlyCompile bool) benchmark.LA
 	groth16ProofSize := buf.Len()
 	merkleProofSize := prep.merkleProofSize()
 	cpLinkProofSize := 0
-	for i := range qaBatchLinkProofs {
-		cpLinkProofSize += crypto.QABatchLinkProofSizeBytes(qaBatchLinkProofs[i])
+	for i := range linkProofs {
+		cpLinkProofSize += crypto.QALinkProofSizeBytes(linkProofs[i])
 	}
 	totalProofSize := groth16ProofSize + merkleProofSize + cpLinkProofSize
 	totalProveTime := prep.commitTime + prep.merkleProveTime + circuitProveTime + cpLinkProveTime
@@ -1290,30 +1294,38 @@ func (p *preparedLayer) sampleCPLinkData(groupID int) ([][]fr.Element, []bn254.G
 	return sg.blocks, sg.commits, sg.blindings
 }
 
-func (p *preparedLayer) qaBatchContext(groupID int) []fr.Element {
-	ext := p.extGroups[groupID]
+func (p *preparedLayer) linkBatchContext() []fr.Element {
 	context := []fr.Element{
-		uint64Element(0x4750543242415443), // "GPT2BATC"
-		uint64Element(uint64(groupID)),
+		uint64Element(0x475054324c494e4b), // "GPT2LINK"
 		p.tensorCm,
 		p.globalCm,
-		ext.root,
-		uint64Element(uint64(ext.depth)),
+		uint64Element(uint64(numGroups)),
 	}
 
-	if groupID == groupScalar {
-		context = append(context, uint64Element(uint64(len(p.scalarLeafIdx))))
-		for i, leafIdx := range p.scalarLeafIdx {
-			context = appendMerkleOpeningContext(context, leafIdx, p.scalarMetas[i])
+	for groupID := 0; groupID < numGroups; groupID++ {
+		ext := p.extGroups[groupID]
+		context = append(
+			context,
+			uint64Element(uint64(groupID)),
+			ext.root,
+			uint64Element(uint64(ext.depth)),
+		)
+
+		if groupID == groupScalar {
+			context = append(context, uint64Element(uint64(len(p.scalarLeafIdx))))
+			for i, leafIdx := range p.scalarLeafIdx {
+				context = appendMerkleOpeningContext(context, leafIdx, p.scalarMetas[i])
+			}
+			continue
 		}
-		return context
+
+		sg := p.sampleGroups[groupID]
+		context = append(context, uint64Element(uint64(len(sg.leafIndices))))
+		for i, leafIdx := range sg.leafIndices {
+			context = appendMerkleOpeningContext(context, leafIdx, sg.metas[i])
+		}
 	}
 
-	sg := p.sampleGroups[groupID]
-	context = append(context, uint64Element(uint64(len(sg.leafIndices))))
-	for i, leafIdx := range sg.leafIndices {
-		context = appendMerkleOpeningContext(context, leafIdx, sg.metas[i])
-	}
 	return context
 }
 

@@ -27,7 +27,7 @@ import (
 )
 
 const (
-	linkerQABatch = "qa_batch"
+	linkerQALink = "qa_link"
 )
 
 const (
@@ -89,7 +89,7 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.L
 	depth := int(math.Log2(float64(N)))
 	field := ecc.BN254.ScalarField()
 
-	fmt.Printf("🔥 [LAMP ZK Protocol] logK=%d, K=%d, N=%d, L=%d, linker=%s, merkle=%s\n", logK, K, N, L, linkerQABatch, merkle)
+	fmt.Printf("🔥 [LAMP ZK Protocol] logK=%d, K=%d, N=%d, L=%d, linker=%s, merkle=%s\n", logK, K, N, L, linkerQALink, merkle)
 
 	if onlyCompile {
 		fmt.Println("=== 🔍 Compiling Circuit for Constraints ===")
@@ -128,7 +128,7 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.L
 		return benchmark.LAMPResult{
 			LogK:        logK,
 			Rho:         rhoStr,
-			Linker:      linkerQABatch,
+			Linker:      linkerQALink,
 			Merkle:      merkle,
 			N:           N,
 			NumQueries:  L,
@@ -314,18 +314,18 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.L
 		log.Fatalf("❌ Grouped commitment mismatch: expected grouped column len=%d and scalar len=%d", 3*L*K, 2*L)
 	}
 
-	var columnQABatchPK crypto.QABatchLinkProvingKey
-	var columnQABatchVK crypto.QABatchLinkVerifyingKey
-	var scalarQABatchPK crypto.QABatchLinkProvingKey
-	var scalarQABatchVK crypto.QABatchLinkVerifyingKey
+	var columnLinkPK crypto.QALinkProvingKey
+	var columnLinkVK crypto.QALinkVerifyingKey
+	var scalarLinkPK crypto.QALinkProvingKey
+	var scalarLinkVK crypto.QALinkVerifyingKey
 	startCPLinkSetup := time.Now()
-	columnQABatchPK, columnQABatchVK, err := crypto.SetupQABatchLink(L, 3*K, proverWithPK.CK2[columnCommitIndex], ckABC)
+	columnLinkPK, columnLinkVK, err := crypto.SetupQALink(L, 3*K, proverWithPK.CK2[columnCommitIndex], ckABC)
 	if err != nil {
-		log.Fatalf("❌ Column QA-batch setup failed: %v", err)
+		log.Fatalf("❌ Column QA-link setup failed: %v", err)
 	}
-	scalarQABatchPK, scalarQABatchVK, err = crypto.SetupQABatchLink(L, 2, proverWithPK.CK2[scalarCommitIndex], ckXYZ)
+	scalarLinkPK, scalarLinkVK, err = crypto.SetupQALink(L, 2, proverWithPK.CK2[scalarCommitIndex], ckXYZ)
 	if err != nil {
-		log.Fatalf("❌ Scalar QA-batch setup failed: %v", err)
+		log.Fatalf("❌ Scalar QA-link setup failed: %v", err)
 	}
 	cpLinkSetupTime += time.Since(startCPLinkSetup).Seconds()
 	setupTime := protocolSetupTime + circuitSetupTime + cpLinkSetupTime
@@ -377,29 +377,23 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.L
 		scalarExternalBlindings = append(scalarExternalBlindings, blXYZ[idx])
 	}
 
-	columnQABatchProof, err := crypto.ProveQABatchLink(
+	columnLinkProof, err := crypto.ProveQALink(
 		columnBlocks,
 		blindingsIn[columnCommitIndex],
 		columnExternalBlindings,
-		columnQABatchPK,
-		cmVec2[columnCommitIndex],
-		columnExternalCommitments,
-		lampQABatchContext(1, []fr.Element{rootABC}, indices)...,
+		columnLinkPK,
 	)
 	if err != nil {
-		log.Fatalf("❌ Column QA-batch proof failed: %v", err)
+		log.Fatalf("❌ Column QA-link proof failed: %v", err)
 	}
-	scalarQABatchProof, err := crypto.ProveQABatchLink(
+	scalarLinkProof, err := crypto.ProveQALink(
 		scalarBlocks,
 		blindingsIn[scalarCommitIndex],
 		scalarExternalBlindings,
-		scalarQABatchPK,
-		cmVec2[scalarCommitIndex],
-		scalarExternalCommitments,
-		lampQABatchContext(2, []fr.Element{rootXYZ}, indices)...,
+		scalarLinkPK,
 	)
 	if err != nil {
-		log.Fatalf("❌ Scalar QA-batch proof failed: %v", err)
+		log.Fatalf("❌ Scalar QA-link proof failed: %v", err)
 	}
 	cpLinkProveTime := time.Since(startCPLinkProve).Seconds()
 
@@ -446,11 +440,22 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.L
 	merkleVerifyTime = time.Since(startMerkleVerify).Seconds()
 
 	startCpLink := time.Now()
-	if !crypto.VerifyQABatchLink(cmVec2[columnCommitIndex], columnExternalCommitments, columnQABatchProof, columnQABatchVK, lampQABatchContext(1, []fr.Element{rootABC}, indices)...) {
-		log.Fatal("❌ Column QA-batch link failed")
+	linkChecks := []crypto.QALinkVerification{
+		{
+			SnarkCommit:     cmVec2[columnCommitIndex],
+			ExternalCommits: columnExternalCommitments,
+			Proof:           columnLinkProof,
+			VK:              columnLinkVK,
+		},
+		{
+			SnarkCommit:     cmVec2[scalarCommitIndex],
+			ExternalCommits: scalarExternalCommitments,
+			Proof:           scalarLinkProof,
+			VK:              scalarLinkVK,
+		},
 	}
-	if !crypto.VerifyQABatchLink(cmVec2[scalarCommitIndex], scalarExternalCommitments, scalarQABatchProof, scalarQABatchVK, lampQABatchContext(2, []fr.Element{rootXYZ}, indices)...) {
-		log.Fatal("❌ Scalar QA-batch link failed")
+	if !crypto.VerifyQALinksBatched(linkChecks, lampLinkBatchContext([]fr.Element{rootABC, rootXYZ}, indices)...) {
+		log.Fatal("❌ Batched QA-link verification failed")
 	}
 	cpLinkVerifyTime += time.Since(startCpLink).Seconds()
 
@@ -468,7 +473,7 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.L
 		crypto.MerkleMultiProofSizeBytes(mmpXYZ) +
 		L*2*crypto.G1AffineSizeBytes
 
-	cpLinkProofSize := crypto.QABatchLinkProofSizeBytes(columnQABatchProof) + crypto.QABatchLinkProofSizeBytes(scalarQABatchProof)
+	cpLinkProofSize := crypto.QALinkProofSizeBytes(columnLinkProof) + crypto.QALinkProofSizeBytes(scalarLinkProof)
 
 	totalProofSize := groth16ProofSize + merkleProofSize + cpLinkProofSize
 
@@ -478,7 +483,7 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.L
 	return benchmark.LAMPResult{
 		LogK:              logK,
 		Rho:               rhoStr,
-		Linker:            linkerQABatch,
+		Linker:            linkerQALink,
 		Merkle:            merkle,
 		N:                 N,
 		NumQueries:        L,
@@ -529,9 +534,9 @@ func combineXYZScalars(x, yz []fr.Element) [][]fr.Element {
 	return out
 }
 
-func lampQABatchContext(label uint64, roots []fr.Element, indices []int) []fr.Element {
-	context := make([]fr.Element, 0, 3+len(roots)+len(indices))
-	context = append(context, uint64Element(0x4c414d5042415443), uint64Element(label), uint64Element(uint64(len(indices))))
+func lampLinkBatchContext(roots []fr.Element, indices []int) []fr.Element {
+	context := make([]fr.Element, 0, 2+len(roots)+len(indices))
+	context = append(context, uint64Element(0x4c414d504c494e4b), uint64Element(uint64(len(indices))))
 	context = append(context, roots...)
 	for _, idx := range indices {
 		context = append(context, uint64Element(uint64(idx)))
