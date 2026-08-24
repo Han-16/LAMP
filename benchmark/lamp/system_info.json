@@ -1,11 +1,11 @@
 {
-  "generatedAt": "2026-06-04T14:00:58Z",
-  "hostname": "0d13101f64af",
+  "generatedAt": "2026-08-24T22:50:05Z",
+  "hostname": "1349f6d35928",
   "os": "linux",
-  "arch": "arm64",
+  "arch": "amd64",
   "goVersion": "go1.25.6",
-  "cpuModel": "arm64",
-  "logicalCores": 10,
-  "totalMemoryBytes": 25162678272,
-  "totalMemory": "23.43 GiB"
+  "cpuModel": "Intel(R) Xeon(R) CPU @ 2.30GHz",
+  "logicalCores": 32,
+  "totalMemoryBytes": 135061606400,
+  "totalMemory": "125.79 GiB"
 }

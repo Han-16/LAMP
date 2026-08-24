@@ -1,6 +1,0 @@
-LogK,Rho,Linker,Merkle,N,NumQueries,Constraints,MatrixComputeTime(s/ms),SetupTime(s/ms),ProtocolSetupTime(s/ms),CircuitSetupTime(s/ms),CPLinkSetupTime(s/ms),MatrixCommitTime(s/ms),VectorCommitTime(s/ms),MerkleProveTime(s/ms),CircuitProveTime(s/ms),CPLinkProveTime(s/ms),TotalProveTime(s/ms),CircuitVerifyTime(s/ms),MerkleVerifyTime(s/ms),CPLinkVerifyTime(s/ms),TotalVerifyTime(s/ms),MerkleProofSize(B),Groth16ProofSize(B),CPLinkProofSize(B),TotalProofSize(B)
-7,1/2,qa_batch,multi,256,128,54069,0.01s,7.66s,0.02s,7.12s,0.53s,0.19s,0.02s,0ms,0.84s,0.04s,1.10s,3ms,1ms,4ms,0.01s,22336,260,128,22724
-8,1/2,qa_batch,multi,512,128,105915,0.07s,15.69s,0.04s,14.78s,0.87s,0.72s,0.04s,0ms,1.72s,0.10s,2.57s,4ms,1ms,4ms,0.01s,29184,260,128,29572
-9,1/2,qa_batch,multi,1024,128,209995,0.54s,26.03s,0.09s,24.38s,1.56s,2.22s,0.08s,0ms,2.55s,0.13s,4.98s,3ms,1ms,4ms,0.01s,35840,260,128,36228
-10,1/2,qa_batch,multi,2048,128,418149,6.73s,82.61s,0.16s,76.02s,6.43s,14.38s,0.39s,0ms,6.75s,0.49s,22.02s,0.01s,1ms,0.01s,0.02s,43584,260,128,43972
-11,1/2,qa_batch,multi,4096,128,834075,57.87s,161.74s,0.42s,150.30s,11.02s,49.80s,1.80s,0ms,13.56s,0.81s,65.97s,0.01s,0.01s,0.01s,0.03s,51840,260,128,52228
