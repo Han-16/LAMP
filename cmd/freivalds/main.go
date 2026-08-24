@@ -67,7 +67,7 @@ func main() {
 
 func runExperiment(logK int, onlyCompile bool) benchmark.FreivaldsResult {
 	K := 1 << logK
-	field := ecc.BN254.ScalarField()
+	field := ecc.BLS12_381.ScalarField()
 
 	fmt.Printf("🔥 [Freivalds] logK=%d, K=%d (%d x %d Matrix)\n", logK, K, K, K)
 

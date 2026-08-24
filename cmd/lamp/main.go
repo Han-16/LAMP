@@ -19,9 +19,9 @@ import (
 	"github.com/Han-16/lamp/protocol"
 
 	"github.com/consensys/gnark-crypto/ecc"
-	"github.com/consensys/gnark-crypto/ecc/bn254"
-	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
-	"github.com/consensys/gnark-crypto/ecc/bn254/fr/fft"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr/fft"
 	"github.com/consensys/gnark/backend/groth16"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/frontend/cs/r1cs"
@@ -90,7 +90,7 @@ func runExperiment(logK int, rhoStr string, L int, merkle string, onlyCompile bo
 		N = K << 2
 	}
 	depth := int(math.Log2(float64(N)))
-	field := ecc.BN254.ScalarField()
+	field := ecc.BLS12_381.ScalarField()
 
 	fmt.Printf("🔥 [LAMP ZK Protocol] logK=%d, K=%d, N=%d, L=%d, linker=%s, merkle=%s\n", logK, K, N, L, linkerQABatch, merkle)
 
@@ -170,7 +170,7 @@ func runExperiment(logK int, rhoStr string, L int, merkle string, onlyCompile bo
 	var errA, errB, errC error
 	var treeABC [][]fr.Element
 	var rootABC fr.Element
-	var leavesABC []bn254.G1Affine
+	var leavesABC []bls12381.G1Affine
 	var blABC []fr.Element
 
 	var wg sync.WaitGroup
@@ -377,7 +377,7 @@ func runExperiment(logK int, rhoStr string, L int, merkle string, onlyCompile bo
 	startCPLinkProve := time.Now()
 
 	columnBlocks := make([][]fr.Element, 0, L)
-	columnExternalCommitments := make([]bn254.G1Affine, 0, L)
+	columnExternalCommitments := make([]bls12381.G1Affine, 0, L)
 	columnExternalBlindings := make([]fr.Element, 0, L)
 	for _, idx := range indices {
 		columnBlocks = append(columnBlocks, combineABCColumn(colsEncA[idx], colsEncB[idx], colsEncC[idx], K))
@@ -386,7 +386,7 @@ func runExperiment(logK int, rhoStr string, L int, merkle string, onlyCompile bo
 	}
 
 	scalarBlocks := make([][]fr.Element, 0, L)
-	scalarExternalCommitments := make([]bn254.G1Affine, 0, L)
+	scalarExternalCommitments := make([]bls12381.G1Affine, 0, L)
 	scalarExternalBlindings := make([]fr.Element, 0, L)
 	for _, idx := range indices {
 		scalarBlocks = append(scalarBlocks, []fr.Element{encX[idx], encYZ[idx]})
@@ -556,8 +556,8 @@ func normalizeMerkle(merkle string) string {
 	return merkleMulti
 }
 
-func selectCommitments(leaves []bn254.G1Affine, indices []int) []bn254.G1Affine {
-	out := make([]bn254.G1Affine, len(indices))
+func selectCommitments(leaves []bls12381.G1Affine, indices []int) []bls12381.G1Affine {
+	out := make([]bls12381.G1Affine, len(indices))
 	for i, idx := range indices {
 		out[i] = leaves[idx]
 	}

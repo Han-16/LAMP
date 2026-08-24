@@ -7,49 +7,49 @@ import (
 	"sync"
 
 	"github.com/consensys/gnark-crypto/ecc"
-	"github.com/consensys/gnark-crypto/ecc/bn254"
-	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 )
 
 type QALinkProvingKey struct {
-	P          []bn254.G1Affine
+	P          []bls12381.G1Affine
 	BlockCount int
 	BlockLen   int
 }
 
 type QALinkVerifyingKey struct {
-	C          []bn254.G2Affine
-	A          bn254.G2Affine
+	C          []bls12381.G2Affine
+	A          bls12381.G2Affine
 	BlockCount int
 	BlockLen   int
 }
 
 type QALinkProof struct {
-	Pi bn254.G1Affine
+	Pi bls12381.G1Affine
 }
 
 type QABatchLinkProvingKey struct {
-	SnarkG     []bn254.G1Affine
-	SnarkH     bn254.G1Affine
-	ExternalG  []bn254.G1Affine
-	ExternalH  bn254.G1Affine
+	SnarkG     []bls12381.G1Affine
+	SnarkH     bls12381.G1Affine
+	ExternalG  []bls12381.G1Affine
+	ExternalH  bls12381.G1Affine
 	BlockCount int
 	BlockLen   int
 }
 
 type QABatchLinkVerifyingKey struct {
-	C0         bn254.G2Affine
-	C1         bn254.G2Affine
-	A          bn254.G2Affine
+	C0         bls12381.G2Affine
+	C1         bls12381.G2Affine
+	A          bls12381.G2Affine
 	BlockCount int
 	BlockLen   int
 }
 
 type QABatchLinkProof struct {
-	Pi bn254.G1Affine
+	Pi bls12381.G1Affine
 }
 
-const G1AffineSizeBytes = 64
+const G1AffineSizeBytes = bls12381.SizeOfG1AffineUncompressed
 
 func SetupQALink(blockCount, blockLen int, snarkCK CommitKey, externalCK CommitKey) (QALinkProvingKey, QALinkVerifyingKey, error) {
 	if blockCount <= 0 || blockLen <= 0 {
@@ -68,7 +68,7 @@ func SetupQALink(blockCount, blockLen int, snarkCK CommitKey, externalCK CommitK
 	}
 	a := randomNonZeroElement()
 
-	p := make([]bn254.G1Affine, blockCount*blockLen+1+blockCount)
+	p := make([]bls12381.G1Affine, blockCount*blockLen+1+blockCount)
 	k0 := elementBigInt(trapdoor[0])
 	kBig := make([]big.Int, blockCount)
 	for i := 0; i < blockCount; i++ {
@@ -94,7 +94,7 @@ func SetupQALink(blockCount, blockLen int, snarkCK CommitKey, externalCK CommitK
 			for flatIndex := start; flatIndex < end; flatIndex++ {
 				block := flatIndex / blockLen
 				offset := flatIndex % blockLen
-				var point bn254.G1Jac
+				var point bls12381.G1Jac
 				point.JointScalarMultiplication(&snarkCK.G[flatIndex], &externalCK.G[offset], &k0, &kBig[block])
 				p[flatIndex].FromJacobian(&point)
 			}
@@ -102,12 +102,12 @@ func SetupQALink(blockCount, blockLen int, snarkCK CommitKey, externalCK CommitK
 	}
 	wg.Wait()
 
-	var alphaPoint bn254.G1Affine
+	var alphaPoint bls12381.G1Affine
 	alphaPoint.ScalarMultiplication(&snarkCK.H, &k0)
 	p[totalValues] = alphaPoint
 
 	for block := 0; block < blockCount; block++ {
-		var betaPoint bn254.G1Affine
+		var betaPoint bls12381.G1Affine
 		betaPoint.ScalarMultiplication(&externalCK.H, &kBig[block])
 		p[totalValues+1+block] = betaPoint
 	}
@@ -116,11 +116,11 @@ func SetupQALink(blockCount, blockLen int, snarkCK CommitKey, externalCK CommitK
 	for i := range trapdoor {
 		aTrapdoor[i].Mul(&a, &trapdoor[i])
 	}
-	_, _, _, g2 := bn254.Generators()
-	c := bn254.BatchScalarMultiplicationG2(&g2, aTrapdoor)
+	_, _, _, g2 := bls12381.Generators()
+	c := bls12381.BatchScalarMultiplicationG2(&g2, aTrapdoor)
 	var aBig big.Int
 	a.BigInt(&aBig)
-	var aG2 bn254.G2Affine
+	var aG2 bls12381.G2Affine
 	aG2.ScalarMultiplication(&g2, &aBig)
 
 	pk := QALinkProvingKey{
@@ -157,22 +157,22 @@ func SetupQABatchLink(blockCount, blockLen int, snarkCK CommitKey, externalCK Co
 	snarkG := scaleG1Points(snarkCK.G, k0Big)
 	externalG := scaleG1Points(externalCK.G, k1Big)
 
-	var snarkH bn254.G1Affine
+	var snarkH bls12381.G1Affine
 	snarkH.ScalarMultiplication(&snarkCK.H, &k0Big)
-	var externalH bn254.G1Affine
+	var externalH bls12381.G1Affine
 	externalH.ScalarMultiplication(&externalCK.H, &k1Big)
 
 	var ak0, ak1 fr.Element
 	ak0.Mul(&a, &k0)
 	ak1.Mul(&a, &k1)
 
-	_, _, _, g2 := bn254.Generators()
+	_, _, _, g2 := bls12381.Generators()
 	var ak0Big, ak1Big, aBig big.Int
 	ak0.BigInt(&ak0Big)
 	ak1.BigInt(&ak1Big)
 	a.BigInt(&aBig)
 
-	var c0, c1, aG2 bn254.G2Affine
+	var c0, c1, aG2 bls12381.G2Affine
 	c0.ScalarMultiplication(&g2, &ak0Big)
 	c1.ScalarMultiplication(&g2, &ak1Big)
 	aG2.ScalarMultiplication(&g2, &aBig)
@@ -208,7 +208,7 @@ func ProveQALink(blocks [][]fr.Element, alpha fr.Element, betas []fr.Element, pk
 	scalars = append(scalars, alpha)
 	scalars = append(scalars, betas...)
 
-	var proof bn254.G1Affine
+	var proof bls12381.G1Affine
 	if _, err := proof.MultiExp(pk.P, scalars, ecc.MultiExpConfig{}); err != nil {
 		return QALinkProof{}, err
 	}
@@ -221,8 +221,8 @@ func ProveQABatchLink(
 	alpha fr.Element,
 	betas []fr.Element,
 	pk QABatchLinkProvingKey,
-	snarkCommit bn254.G1Affine,
-	externalCommits []bn254.G1Affine,
+	snarkCommit bls12381.G1Affine,
+	externalCommits []bls12381.G1Affine,
 	context ...fr.Element,
 ) (QABatchLinkProof, error) {
 	if err := validateQALinkWitnessShape(blocks, betas, pk.BlockCount, pk.BlockLen); err != nil {
@@ -244,18 +244,18 @@ func ProveQABatchLink(
 	externalCommitKey := CommitKey{G: pk.ExternalG, H: pk.ExternalH}
 	externalPart := PedersenCommitBlinded(aggBlock, aggBeta, externalCommitKey)
 
-	var pi bn254.G1Affine
+	var pi bls12381.G1Affine
 	pi.Add(&snarkPart, &externalPart)
 	return QABatchLinkProof{Pi: pi}, nil
 }
 
-func VerifyQALink(snarkCommit bn254.G1Affine, externalCommits []bn254.G1Affine, proof QALinkProof, vk QALinkVerifyingKey) bool {
+func VerifyQALink(snarkCommit bls12381.G1Affine, externalCommits []bls12381.G1Affine, proof QALinkProof, vk QALinkVerifyingKey) bool {
 	if len(externalCommits) != vk.BlockCount || len(vk.C) != vk.BlockCount+1 {
 		return false
 	}
 
-	g1s := make([]bn254.G1Affine, 0, vk.BlockCount+2)
-	g2s := make([]bn254.G2Affine, 0, vk.BlockCount+2)
+	g1s := make([]bls12381.G1Affine, 0, vk.BlockCount+2)
+	g2s := make([]bls12381.G2Affine, 0, vk.BlockCount+2)
 
 	g1s = append(g1s, snarkCommit)
 	g2s = append(g2s, vk.C[0])
@@ -264,18 +264,18 @@ func VerifyQALink(snarkCommit bn254.G1Affine, externalCommits []bn254.G1Affine, 
 		g2s = append(g2s, vk.C[i+1])
 	}
 
-	var negA bn254.G2Affine
+	var negA bls12381.G2Affine
 	negA.Neg(&vk.A)
 	g1s = append(g1s, proof.Pi)
 	g2s = append(g2s, negA)
 
-	ok, err := bn254.PairingCheck(g1s, g2s)
+	ok, err := bls12381.PairingCheck(g1s, g2s)
 	return err == nil && ok
 }
 
 func VerifyQABatchLink(
-	snarkCommit bn254.G1Affine,
-	externalCommits []bn254.G1Affine,
+	snarkCommit bls12381.G1Affine,
+	externalCommits []bls12381.G1Affine,
 	proof QABatchLinkProof,
 	vk QABatchLinkVerifyingKey,
 	context ...fr.Element,
@@ -285,16 +285,16 @@ func VerifyQABatchLink(
 	}
 
 	weights := deriveQABatchWeights(snarkCommit, externalCommits, vk.BlockCount, vk.BlockLen, context)
-	var aggregatedExternalCommit bn254.G1Affine
+	var aggregatedExternalCommit bls12381.G1Affine
 	if _, err := aggregatedExternalCommit.MultiExp(externalCommits, weights, ecc.MultiExpConfig{}); err != nil {
 		return false
 	}
 
-	var negA bn254.G2Affine
+	var negA bls12381.G2Affine
 	negA.Neg(&vk.A)
-	ok, err := bn254.PairingCheck(
-		[]bn254.G1Affine{snarkCommit, aggregatedExternalCommit, proof.Pi},
-		[]bn254.G2Affine{vk.C0, vk.C1, negA},
+	ok, err := bls12381.PairingCheck(
+		[]bls12381.G1Affine{snarkCommit, aggregatedExternalCommit, proof.Pi},
+		[]bls12381.G2Affine{vk.C0, vk.C1, negA},
 	)
 	return err == nil && ok
 }
@@ -322,7 +322,7 @@ func validateQALinkWitnessShape(blocks [][]fr.Element, betas []fr.Element, block
 	return nil
 }
 
-func deriveQABatchWeights(snarkCommit bn254.G1Affine, externalCommits []bn254.G1Affine, blockCount, blockLen int, context []fr.Element) []fr.Element {
+func deriveQABatchWeights(snarkCommit bls12381.G1Affine, externalCommits []bls12381.G1Affine, blockCount, blockLen int, context []fr.Element) []fr.Element {
 	elements := make([]fr.Element, 0, 4+len(context)+1+len(externalCommits))
 	var domain, countElement, lenElement fr.Element
 	domain.SetUint64(0x51414241544348) // "QABATCH"
@@ -379,8 +379,8 @@ func flattenBlocks(blocks [][]fr.Element) []fr.Element {
 	return out
 }
 
-func scaleG1Points(points []bn254.G1Affine, scalar big.Int) []bn254.G1Affine {
-	out := make([]bn254.G1Affine, len(points))
+func scaleG1Points(points []bls12381.G1Affine, scalar big.Int) []bls12381.G1Affine {
+	out := make([]bls12381.G1Affine, len(points))
 	if len(points) == 0 {
 		return out
 	}

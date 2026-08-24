@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"math/big"
 	"runtime"
+	"sync"
 	"time"
 
 	"github.com/consensys/gnark-crypto/ecc"
@@ -26,6 +27,12 @@ import (
 	"github.com/consensys/gnark/logger"
 
 	fcs "github.com/consensys/gnark/frontend/cs"
+)
+
+var (
+	// ponytail: global bridge assumes sequential proving; return blindings from Prove before enabling concurrent proofs.
+	HackBlindings []fr.Element
+	hackMutex     sync.Mutex
 )
 
 // Proof represents a Groth16 proof that was encoded with a ProvingKey and can be verified
@@ -67,10 +74,14 @@ func Prove(r1cs *cs.R1CS, pk *ProvingKey, fullWitness witness.Witness, opts ...b
 	solverOpts := opt.SolverOpts[:len(opt.SolverOpts):len(opt.SolverOpts)]
 
 	privateCommittedValues := make([][]fr.Element, len(commitmentInfo))
+	HackBlindings = make([]fr.Element, len(commitmentInfo))
 
 	// override hints
 	bsb22ID := solver.GetHintID(fcs.Bsb22CommitmentComputePlaceholder)
 	solverOpts = append(solverOpts, solver.OverrideHint(bsb22ID, func(_ *big.Int, in []*big.Int, out []*big.Int) error {
+		hackMutex.Lock()
+		defer hackMutex.Unlock()
+
 		i := int(in[0].Int64())
 		in = in[1:]
 		privateCommittedValues[i] = make([]fr.Element, len(commitmentInfo[i].PrivateCommitted))
@@ -78,6 +89,9 @@ func Prove(r1cs *cs.R1CS, pk *ProvingKey, fullWitness witness.Witness, opts ...b
 		committed := in[+len(hashed):]
 		for j, inJ := range committed {
 			privateCommittedValues[i][j].SetBigInt(inJ)
+		}
+		if len(privateCommittedValues[i]) > 0 {
+			HackBlindings[i] = privateCommittedValues[i][len(privateCommittedValues[i])-1]
 		}
 
 		var err error

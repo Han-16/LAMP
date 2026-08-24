@@ -3,8 +3,8 @@ package crypto
 import (
 	"testing"
 
-	"github.com/consensys/gnark-crypto/ecc/bn254"
-	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 )
 
 func TestMerkleMultiProofRoundTrip(t *testing.T) {
@@ -52,9 +52,9 @@ func TestMerkleMultiProofWithMetaRejectsTamperedLeaf(t *testing.T) {
 	}
 }
 
-func randomCommitments(count int) []bn254.G1Affine {
+func randomCommitments(count int) []bls12381.G1Affine {
 	ck := SetupCommitKey(1)
-	out := make([]bn254.G1Affine, count)
+	out := make([]bls12381.G1Affine, count)
 	for i := range out {
 		var value, blinding fr.Element
 		value.SetRandom()

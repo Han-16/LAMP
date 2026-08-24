@@ -6,21 +6,21 @@ import (
 	"sync"
 
 	"github.com/consensys/gnark-crypto/ecc"
-	"github.com/consensys/gnark-crypto/ecc/bn254"
-	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 )
 
 type CommitKey struct {
-	G []bn254.G1Affine // G[i] for i in 0..K-1
-	H bn254.G1Affine   // H for blinding
+	G []bls12381.G1Affine // G[i] for i in 0..K-1
+	H bls12381.G1Affine   // H for blinding
 }
 
 func SetupCommitKey(K int) CommitKey {
 	var ck CommitKey
-	ck.G = make([]bn254.G1Affine, K)
+	ck.G = make([]bls12381.G1Affine, K)
 
-	_, _, G1, _ := bn254.Generators()
-	fieldSize := ecc.BN254.ScalarField()
+	_, _, G1, _ := bls12381.Generators()
+	fieldSize := ecc.BLS12_381.ScalarField()
 
 	// Generate random points for G and H by multiplying the generator with random scalars.
 	for i := 0; i < K; i++ {
@@ -41,12 +41,12 @@ func SetupCommitKey(K int) CommitKey {
 }
 
 // PedersenCommit: C = <data, G> + blinding * H
-func PedersenCommitBlinded(data []fr.Element, blinding fr.Element, ck CommitKey) bn254.G1Affine {
+func PedersenCommitBlinded(data []fr.Element, blinding fr.Element, ck CommitKey) bls12381.G1Affine {
 	if len(data) != len(ck.G) {
 		panic("data length must match the number of G points in the commit key")
 	}
 
-	points := make([]bn254.G1Affine, len(ck.G)+1)
+	points := make([]bls12381.G1Affine, len(ck.G)+1)
 	copy(points, ck.G)
 	points[len(ck.G)] = ck.H
 
@@ -54,7 +54,7 @@ func PedersenCommitBlinded(data []fr.Element, blinding fr.Element, ck CommitKey)
 	copy(scalars, data)
 	scalars[len(data)] = blinding
 
-	var res bn254.G1Affine
+	var res bls12381.G1Affine
 	_, err := res.MultiExp(points, scalars, ecc.MultiExpConfig{})
 	if err != nil {
 		panic(err)
@@ -63,17 +63,17 @@ func PedersenCommitBlinded(data []fr.Element, blinding fr.Element, ck CommitKey)
 	return res
 }
 
-func BatchPedersenCommitBlinded(matrix [][]fr.Element, ck CommitKey) ([]bn254.G1Affine, []fr.Element) {
+func BatchPedersenCommitBlinded(matrix [][]fr.Element, ck CommitKey) ([]bls12381.G1Affine, []fr.Element) {
 	L := len(matrix)
 	if L == 0 {
 		return nil, nil
 	}
 	K := len(matrix[0])
 
-	cm := make([]bn254.G1Affine, L)
+	cm := make([]bls12381.G1Affine, L)
 	blindings := make([]fr.Element, L)
 
-	basisPoints := make([]bn254.G1Affine, len(ck.G)+1)
+	basisPoints := make([]bls12381.G1Affine, len(ck.G)+1)
 	copy(basisPoints, ck.G)
 	basisPoints[len(ck.G)] = ck.H
 
@@ -115,7 +115,7 @@ func BatchPedersenCommitBlinded(matrix [][]fr.Element, ck CommitKey) ([]bn254.G1
 	return cm, blindings
 }
 
-func BatchPedersenCommitABCBlinded(a, b, c [][]fr.Element, ck CommitKey) ([]bn254.G1Affine, []fr.Element) {
+func BatchPedersenCommitABCBlinded(a, b, c [][]fr.Element, ck CommitKey) ([]bls12381.G1Affine, []fr.Element) {
 	L := len(a)
 	if L == 0 {
 		return nil, nil
@@ -134,10 +134,10 @@ func BatchPedersenCommitABCBlinded(a, b, c [][]fr.Element, ck CommitKey) ([]bn25
 		}
 	}
 
-	cm := make([]bn254.G1Affine, L)
+	cm := make([]bls12381.G1Affine, L)
 	blindings := make([]fr.Element, L)
 
-	basisPoints := make([]bn254.G1Affine, len(ck.G)+1)
+	basisPoints := make([]bls12381.G1Affine, len(ck.G)+1)
 	copy(basisPoints, ck.G)
 	basisPoints[len(ck.G)] = ck.H
 

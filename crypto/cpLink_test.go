@@ -3,8 +3,8 @@ package crypto
 import (
 	"testing"
 
-	"github.com/consensys/gnark-crypto/ecc/bn254"
-	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 )
 
 func TestQALinkRoundTrip(t *testing.T) {
@@ -25,7 +25,7 @@ func TestQALinkRoundTrip(t *testing.T) {
 	}
 
 	snarkCommit := PedersenCommitBlinded(flattenBlocks(blocks), alpha, snarkCK)
-	externalCommits := make([]bn254.G1Affine, blockCount)
+	externalCommits := make([]bls12381.G1Affine, blockCount)
 	for i := range blocks {
 		externalCommits[i] = PedersenCommitBlinded(blocks[i], betas[i], externalCK)
 	}
@@ -61,7 +61,7 @@ func TestQALinkRejectsMismatchedExternalCommitment(t *testing.T) {
 	}
 
 	snarkCommit := PedersenCommitBlinded(flattenBlocks(blocks), alpha, snarkCK)
-	externalCommits := make([]bn254.G1Affine, blockCount)
+	externalCommits := make([]bls12381.G1Affine, blockCount)
 	for i := range blocks {
 		externalCommits[i] = PedersenCommitBlinded(blocks[i], betas[i], externalCK)
 	}
@@ -101,7 +101,7 @@ func TestQABatchLinkRoundTrip(t *testing.T) {
 	}
 
 	snarkCommit := PedersenCommitBlinded(flattenBlocks(blocks), alpha, snarkCK)
-	externalCommits := make([]bn254.G1Affine, blockCount)
+	externalCommits := make([]bls12381.G1Affine, blockCount)
 	for i := range blocks {
 		externalCommits[i] = PedersenCommitBlinded(blocks[i], betas[i], externalCK)
 	}
@@ -139,7 +139,7 @@ func TestQABatchLinkRejectsMismatchedExternalCommitment(t *testing.T) {
 	}
 
 	snarkCommit := PedersenCommitBlinded(flattenBlocks(blocks), alpha, snarkCK)
-	externalCommits := make([]bn254.G1Affine, blockCount)
+	externalCommits := make([]bls12381.G1Affine, blockCount)
 	for i := range blocks {
 		externalCommits[i] = PedersenCommitBlinded(blocks[i], betas[i], externalCK)
 	}
@@ -181,7 +181,7 @@ func TestQABatchLinkRejectsDifferentContext(t *testing.T) {
 	}
 
 	snarkCommit := PedersenCommitBlinded(flattenBlocks(blocks), alpha, snarkCK)
-	externalCommits := make([]bn254.G1Affine, blockCount)
+	externalCommits := make([]bls12381.G1Affine, blockCount)
 	for i := range blocks {
 		externalCommits[i] = PedersenCommitBlinded(blocks[i], betas[i], externalCK)
 	}
@@ -219,7 +219,7 @@ func TestQABatchLinkRejectsMismatchedSnarkCommitment(t *testing.T) {
 	}
 
 	snarkCommit := PedersenCommitBlinded(flattenBlocks(blocks), alpha, snarkCK)
-	externalCommits := make([]bn254.G1Affine, blockCount)
+	externalCommits := make([]bls12381.G1Affine, blockCount)
 	for i := range blocks {
 		externalCommits[i] = PedersenCommitBlinded(blocks[i], betas[i], externalCK)
 	}

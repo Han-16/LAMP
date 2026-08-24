@@ -14,7 +14,7 @@ import (
 	"github.com/Han-16/lamp/matrix"
 
 	"github.com/consensys/gnark-crypto/ecc"
-	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/consensys/gnark/backend/groth16"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/frontend/cs/r1cs"
@@ -93,7 +93,7 @@ func runExperiment(logK int, batch int, onlyCompile bool) benchmark.FreivaldsBat
 	}
 
 	K := 1 << logK
-	field := ecc.BN254.ScalarField()
+	field := ecc.BLS12_381.ScalarField()
 
 	fmt.Printf("🔥 [Freivalds Batch] logK=%d, K=%d (%d x %d Matrix), batch=%d\n", logK, K, K, K, batch)
 

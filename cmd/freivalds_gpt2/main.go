@@ -14,7 +14,7 @@ import (
 	"github.com/Han-16/lamp/matrix"
 
 	"github.com/consensys/gnark-crypto/ecc"
-	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/consensys/gnark/backend/groth16"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/frontend/cs/r1cs"
@@ -119,7 +119,7 @@ func runExperiment(seqLog int, onlyCompile bool) benchmark.FreivaldsGPT2Result {
 		log.Fatalf("invalid seq=%d", seqLog)
 	}
 	seqLen := 1 << seqLog
-	field := ecc.BN254.ScalarField()
+	field := ecc.BLS12_381.ScalarField()
 	fmt.Printf("Freivalds GPT-2 medium packed-QKV layer: seq=2^%d=%d\n", seqLog, seqLen)
 
 	if onlyCompile {

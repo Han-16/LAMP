@@ -3,11 +3,11 @@ package crypto
 import (
 	"sort"
 
-	"github.com/consensys/gnark-crypto/ecc/bn254"
-	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 )
 
-const MerkleHashSizeBytes = 32
+const MerkleHashSizeBytes = fr.Bytes
 
 type MerkleLeafMeta struct {
 	GroupID uint64
@@ -32,7 +32,7 @@ func buildBaseMerkleTree(leaves []fr.Element, depth int) ([][]fr.Element, fr.Ele
 	return tree, tree[depth][0]
 }
 
-func BuildMerkleTreeFromGroupElements(leaves []bn254.G1Affine, depth int) ([][]fr.Element, fr.Element) {
+func BuildMerkleTreeFromGroupElements(leaves []bls12381.G1Affine, depth int) ([][]fr.Element, fr.Element) {
 	frLeaves := make([]fr.Element, len(leaves))
 	for i, leaf := range leaves {
 		frLeaves[i] = HashPoint(leaf)
@@ -40,7 +40,7 @@ func BuildMerkleTreeFromGroupElements(leaves []bn254.G1Affine, depth int) ([][]f
 	return buildBaseMerkleTree(frLeaves, depth)
 }
 
-func HashPointWithMeta(point bn254.G1Affine, meta MerkleLeafMeta) fr.Element {
+func HashPointWithMeta(point bls12381.G1Affine, meta MerkleLeafMeta) fr.Element {
 	var groupID, itemID, index fr.Element
 	groupID.SetUint64(meta.GroupID)
 	itemID.SetUint64(meta.ItemID)
@@ -48,7 +48,7 @@ func HashPointWithMeta(point bn254.G1Affine, meta MerkleLeafMeta) fr.Element {
 	return HashElements(groupID, itemID, index, HashPoint(point))
 }
 
-func BuildMerkleTreeFromGroupElementsWithMeta(leaves []bn254.G1Affine, metas []MerkleLeafMeta) ([][]fr.Element, fr.Element, int) {
+func BuildMerkleTreeFromGroupElementsWithMeta(leaves []bls12381.G1Affine, metas []MerkleLeafMeta) ([][]fr.Element, fr.Element, int) {
 	if len(leaves) != len(metas) {
 		panic("leaf and metadata counts must match")
 	}

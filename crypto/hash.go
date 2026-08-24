@@ -4,10 +4,9 @@ import (
 	"fmt"
 	"math/big"
 
-	"github.com/consensys/gnark-crypto/ecc/bn254"
-	"github.com/consensys/gnark-crypto/ecc/bn254/fp"
-	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
-	"github.com/consensys/gnark-crypto/ecc/bn254/fr/mimc"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr/mimc"
 	"golang.org/x/crypto/sha3"
 )
 
@@ -33,17 +32,12 @@ func HashElementsMiMC(elements ...fr.Element) fr.Element {
 	return res
 }
 
-func FpToFr(fpElem fp.Element) fr.Element {
-	var frElem fr.Element
-	b := fpElem.Bytes()
-	frElem.SetBytes(b[:])
-	return frElem
-}
-
-func HashPoint(p bn254.G1Affine) fr.Element {
-	xFr := FpToFr(p.X)
-	yFr := FpToFr(p.Y)
-	return HashElements(xFr, yFr)
+func HashPoint(p bls12381.G1Affine) fr.Element {
+	h := sha3.NewLegacyKeccak256()
+	h.Write(p.Marshal())
+	var res fr.Element
+	res.SetBytes(h.Sum(nil))
+	return res
 }
 
 func GenerateUniqueIndices(seed fr.Element, N int, L int) ([]int, error) {

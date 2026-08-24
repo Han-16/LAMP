@@ -19,9 +19,9 @@ import (
 	"github.com/Han-16/lamp/protocol"
 
 	"github.com/consensys/gnark-crypto/ecc"
-	"github.com/consensys/gnark-crypto/ecc/bn254"
-	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
-	"github.com/consensys/gnark-crypto/ecc/bn254/fr/fft"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr/fft"
 	"github.com/consensys/gnark/backend/groth16"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/frontend/cs/r1cs"
@@ -132,7 +132,7 @@ func runExperiment(logK int, rhoStr string, L int, batch int, merkle string, onl
 		log.Fatalf("L=%d exceeds codeword length N=%d", L, N)
 	}
 	depth := int(math.Log2(float64(N)))
-	field := ecc.BN254.ScalarField()
+	field := ecc.BLS12_381.ScalarField()
 
 	fmt.Printf("🔥 [LAMPBATCH Protocol] logK=%d, K=%d, N=%d, L=%d, batch=%d, linker=%s, merkle=%s\n", logK, K, N, L, batch, linkerQABatch, merkle)
 
@@ -621,9 +621,9 @@ func findCommitmentKeys(keys []crypto.CommitKey, columnLen, scalarLen int) (int,
 	return columnCommitIndex, scalarCommitIndex
 }
 
-func selectBlocksAndOpenings(blocks [][]fr.Element, leaves []bn254.G1Affine, blindings []fr.Element, indices []int) ([][]fr.Element, []bn254.G1Affine, []fr.Element) {
+func selectBlocksAndOpenings(blocks [][]fr.Element, leaves []bls12381.G1Affine, blindings []fr.Element, indices []int) ([][]fr.Element, []bls12381.G1Affine, []fr.Element) {
 	selectedBlocks := make([][]fr.Element, 0, len(indices))
-	selectedCommitments := make([]bn254.G1Affine, 0, len(indices))
+	selectedCommitments := make([]bls12381.G1Affine, 0, len(indices))
 	selectedBlindings := make([]fr.Element, 0, len(indices))
 	for _, idx := range indices {
 		selectedBlocks = append(selectedBlocks, blocks[idx])
@@ -698,8 +698,8 @@ func normalizeMerkle(merkle string) string {
 	return merkleMulti
 }
 
-func selectCommitments(leaves []bn254.G1Affine, indices []int) []bn254.G1Affine {
-	out := make([]bn254.G1Affine, len(indices))
+func selectCommitments(leaves []bls12381.G1Affine, indices []int) []bls12381.G1Affine {
+	out := make([]bls12381.G1Affine, len(indices))
 	for i, idx := range indices {
 		out[i] = leaves[idx]
 	}

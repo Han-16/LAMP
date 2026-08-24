@@ -17,9 +17,9 @@ import (
 	"github.com/Han-16/lamp/protocol"
 
 	"github.com/consensys/gnark-crypto/ecc"
-	"github.com/consensys/gnark-crypto/ecc/bn254"
-	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
-	"github.com/consensys/gnark-crypto/ecc/bn254/fr/fft"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr/fft"
 	"github.com/consensys/gnark/backend/groth16"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/frontend/cs/r1cs"
@@ -79,7 +79,7 @@ type extGroup struct {
 	blockLen  int
 	ck        crypto.CommitKey
 	blocks    [][]fr.Element
-	commits   []bn254.G1Affine
+	commits   []bls12381.G1Affine
 	blindings []fr.Element
 	metas     []crypto.MerkleLeafMeta
 	tree      [][]fr.Element
@@ -90,7 +90,7 @@ type extGroup struct {
 type sampleGroup struct {
 	blockLen      int
 	blocks        [][]fr.Element
-	commits       []bn254.G1Affine
+	commits       []bls12381.G1Affine
 	blindings     []fr.Element
 	metas         []crypto.MerkleLeafMeta
 	leafIndices   []int
@@ -162,7 +162,7 @@ type preparedLayer struct {
 
 	scalars          []fr.Element
 	scalarBlocks     [][]fr.Element
-	scalarCommits    []bn254.G1Affine
+	scalarCommits    []bls12381.G1Affine
 	scalarBlindings  []fr.Element
 	scalarMetas      []crypto.MerkleLeafMeta
 	scalarLeafIdx    []int
@@ -236,7 +236,7 @@ func runExperiment(seqLog int, rho string, L int, linker string, merkle string, 
 	}
 	emptyCircuit := buildCircuit(prep, false)
 
-	field := ecc.BN254.ScalarField()
+	field := ecc.BLS12_381.ScalarField()
 	r1csSystem, err := frontend.Compile(field, r1cs.NewBuilder, emptyCircuit)
 	if err != nil {
 		log.Fatalf("LAMP GPT-2 compilation failed: %v", err)
@@ -1353,7 +1353,7 @@ func codewordLength(k int, rho string) int {
 	}
 }
 
-func (p *preparedLayer) sampleCPLinkData(groupID int) ([][]fr.Element, []bn254.G1Affine, []fr.Element) {
+func (p *preparedLayer) sampleCPLinkData(groupID int) ([][]fr.Element, []bls12381.G1Affine, []fr.Element) {
 	if groupID == groupScalar {
 		return p.scalarBlocks, p.scalarCommits, p.scalarBlindings
 	}
