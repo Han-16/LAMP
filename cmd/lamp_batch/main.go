@@ -36,10 +36,12 @@ const (
 
 const (
 	labelChallengeR = 0x524c4352 // "RLCR"
+	labelChallengeB = 0x524c4342 // "RLCB"
 	labelGamma      = 0x524c4347 // "RLCG"
 	labelQueries    = 0x524c4351 // "RLCQ"
 	labelRSXBase    = 1000
 	labelRSW        = 2000
+	labelRSBTest    = 0x52534254 // "RSBT"
 )
 
 type batchProduct struct {
@@ -164,7 +166,7 @@ func runExperiment(logK int, rhoStr string, L int, batch int, onlyCompile bool) 
 
 	startProtocolSetup := time.Now()
 	ckABC := crypto.SetupCommitKey(3 * batch * K)
-	ckXYZ := crypto.SetupCommitKey(batch + 1)
+	ckXYZ := crypto.SetupCommitKey(batch + 2)
 	encoder := crypto.NewEncoder(K, N)
 	protocolSetupTime += time.Since(startProtocolSetup).Seconds()
 
@@ -189,13 +191,16 @@ func runExperiment(logK int, rhoStr string, L int, batch int, onlyCompile bool) 
 
 	cmABC := crypto.HashElementsMiMC(rootABC)
 	challengeR := deriveLAMPBATCHChallenge(cmABC, labelChallengeR)
+	challengeB := deriveLAMPBATCHChallenge(cmABC, labelChallengeB)
 	gamma := deriveLAMPBATCHChallenge(cmABC, labelGamma)
 	rPowers := matrix.Powers(challengeR, K)
+	bPowers := matrix.Powers(challengeB, K)
 	gammaPowers := matrix.Powers(gamma, batch)
 	matCommitTime := time.Since(startMatCommit).Seconds()
 
 	startVecCommit := time.Now()
 	vecW := make([]fr.Element, K)
+	vecBTest := make([]fr.Element, K)
 	for i := range products {
 		products[i].VecX = matrix.VecMatMul(rPowers, products[i].A, K)
 		_, encX, err := encoder.Encode(products[i].VecX)
@@ -206,13 +211,20 @@ func runExperiment(logK int, rhoStr string, L int, batch int, onlyCompile bool) 
 
 		yi := matrix.VecMatMul(products[i].VecX, products[i].B, K)
 		addScaledVector(vecW, yi, gammaPowers[i])
+
+		biTest := matrix.VecMatMul(bPowers, products[i].B, K)
+		addScaledVector(vecBTest, biTest, gammaPowers[i])
 	}
 	_, encW, err := encoder.Encode(vecW)
 	if err != nil {
 		log.Fatalf("❌ Failed to encode batch output vector: %v", err)
 	}
+	_, encBTest, err := encoder.Encode(vecBTest)
+	if err != nil {
+		log.Fatalf("❌ Failed to encode batch B proximity vector: %v", err)
+	}
 
-	xyzBlocks := buildXYZBlocks(products, encW, N)
+	xyzBlocks := buildXYZBlocks(products, encW, encBTest, N)
 	leavesXYZ, blXYZ := crypto.BatchPedersenCommitBlinded(xyzBlocks, ckXYZ)
 	treeXYZ, rootXYZ := crypto.BuildMerkleTreeFromGroupElements(leavesXYZ, depth)
 
@@ -231,6 +243,10 @@ func runExperiment(logK int, rhoStr string, L int, batch int, onlyCompile bool) 
 	rsPointW, err := protocol.GenerateRSEvaluationPointWithLabel(cmXYZ, labelRSW, N, nil)
 	if err != nil {
 		log.Fatalf("❌ Failed to sample RS point for W: %v", err)
+	}
+	rsPointB, err := protocol.GenerateRSEvaluationPointWithLabel(cmXYZ, labelRSBTest, N, nil)
+	if err != nil {
+		log.Fatalf("❌ Failed to sample RS point for B proximity: %v", err)
 	}
 	vecCommitTime := time.Since(startVecCommit).Seconds()
 
@@ -259,22 +275,24 @@ func runExperiment(logK int, rhoStr string, L int, batch int, onlyCompile bool) 
 	assignment.CmABC = cmABC
 	assignment.CmXYZ = cmXYZ
 	assignment.ChallengeR = challengeR
+	assignment.ChallengeB = challengeB
 	assignment.Gamma = gamma
 	assignment.RSPointW = rsPointW
+	assignment.RSPointB = rsPointB
 	for i := range rsPointsX {
 		assignment.RSPointsX[i] = rsPointsX[i]
 	}
 
-	fillLAMPBATCHAssignment(assignment, products, vecW, encW, abcBlocks, xyzBlocks, indices, K, N)
+	fillLAMPBATCHAssignment(assignment, products, vecW, encW, vecBTest, encBTest, abcBlocks, xyzBlocks, indices, K, N)
 
 	startProtocolBindSetup := time.Now()
 	proverWithPK := protocol.NewProver(pk, ckABC, encoder)
 	verifier := protocol.NewVerifier(vk, ckABC, proverWithPK.CK2)
 	protocolSetupTime += time.Since(startProtocolBindSetup).Seconds()
 
-	columnCommitIndex, scalarCommitIndex := findCommitmentKeys(proverWithPK.CK2, L*3*batch*K, L*(batch+1))
+	columnCommitIndex, scalarCommitIndex := findCommitmentKeys(proverWithPK.CK2, L*3*batch*K, L*(batch+2))
 	if columnCommitIndex < 0 || scalarCommitIndex < 0 {
-		log.Fatalf("❌ Grouped commitment mismatch: expected grouped column len=%d and scalar len=%d", L*3*batch*K, L*(batch+1))
+		log.Fatalf("❌ Grouped commitment mismatch: expected grouped column len=%d and scalar len=%d", L*3*batch*K, L*(batch+2))
 	}
 
 	startCPLinkSetup := time.Now()
@@ -282,7 +300,7 @@ func runExperiment(logK int, rhoStr string, L int, batch int, onlyCompile bool) 
 	if err != nil {
 		log.Fatalf("❌ Column QA-link setup failed: %v", err)
 	}
-	scalarLinkPK, scalarLinkVK, err := crypto.SetupQALink(L, batch+1, proverWithPK.CK2[scalarCommitIndex], ckXYZ)
+	scalarLinkPK, scalarLinkVK, err := crypto.SetupQALink(L, batch+2, proverWithPK.CK2[scalarCommitIndex], ckXYZ)
 	if err != nil {
 		log.Fatalf("❌ Scalar QA-link setup failed: %v", err)
 	}
@@ -343,7 +361,7 @@ func runExperiment(logK int, rhoStr string, L int, batch int, onlyCompile bool) 
 
 	fmt.Println("=== Verifying All Proofs ===")
 	startVerify := time.Now()
-	verifyTranscript(rootABC, rootXYZ, cmABC, cmXYZ, challengeR, gamma, indices, rsPointsX, rsPointW, N, L)
+	verifyTranscript(rootABC, rootXYZ, cmABC, cmXYZ, challengeR, challengeB, gamma, indices, rsPointsX, rsPointW, rsPointB, N, L)
 
 	startCircuitVerify := time.Now()
 	if err := groth16.Verify(circuitProof, vk, publicWitness); err != nil {
@@ -448,18 +466,20 @@ func newLAMPBATCHCircuit(K, N, batch, L int, rootsK, weightsK, rootsN, weightsN 
 		K: K, N: N, Batch: batch,
 		DomainK: rootsK, WeightsK: weightsK,
 		DomainN: rootsN, WeightsN: weightsN,
-		Indices:    make([]frontend.Variable, L),
-		RSPointsX:  make([]frontend.Variable, batch),
-		ColsEncABC: make([][]frontend.Variable, L),
-		TargetXYZ:  make([][]frontend.Variable, L),
-		VecX:       make([][]frontend.Variable, batch),
-		EncX:       make([][]frontend.Variable, batch),
-		VecW:       make([]frontend.Variable, K),
-		EncW:       make([]frontend.Variable, N),
+		Indices:          make([]frontend.Variable, L),
+		RSPointsX:        make([]frontend.Variable, batch),
+		ColsEncABC:       make([][]frontend.Variable, L),
+		QueriedEncValues: make([][]frontend.Variable, L),
+		VecX:             make([][]frontend.Variable, batch),
+		EncX:             make([][]frontend.Variable, batch),
+		VecW:             make([]frontend.Variable, K),
+		EncW:             make([]frontend.Variable, N),
+		VecBTest:         make([]frontend.Variable, K),
+		EncBTest:         make([]frontend.Variable, N),
 	}
 	for i := 0; i < L; i++ {
 		c.ColsEncABC[i] = make([]frontend.Variable, 3*batch*K)
-		c.TargetXYZ[i] = make([]frontend.Variable, batch+1)
+		c.QueriedEncValues[i] = make([]frontend.Variable, batch+2)
 	}
 	for i := 0; i < batch; i++ {
 		c.VecX[i] = make([]frontend.Variable, K)
@@ -514,14 +534,15 @@ func buildABCBlocks(products []batchProduct, N, K int) [][]fr.Element {
 	return blocks
 }
 
-func buildXYZBlocks(products []batchProduct, encW []fr.Element, N int) [][]fr.Element {
+func buildXYZBlocks(products []batchProduct, encW, encBTest []fr.Element, N int) [][]fr.Element {
 	blocks := make([][]fr.Element, N)
 	for col := 0; col < N; col++ {
-		block := make([]fr.Element, 0, len(products)+1)
+		block := make([]fr.Element, 0, len(products)+2)
 		for i := range products {
 			block = append(block, products[i].EncX[col])
 		}
 		block = append(block, encW[col])
+		block = append(block, encBTest[col])
 		blocks[col] = block
 	}
 	return blocks
@@ -532,6 +553,8 @@ func fillLAMPBATCHAssignment(
 	products []batchProduct,
 	vecW []fr.Element,
 	encW []fr.Element,
+	vecBTest []fr.Element,
+	encBTest []fr.Element,
 	abcBlocks [][]fr.Element,
 	xyzBlocks [][]fr.Element,
 	indices []int,
@@ -551,10 +574,16 @@ func fillLAMPBATCHAssignment(
 	for j := 0; j < N; j++ {
 		assignment.EncW[j] = encW[j]
 	}
+	for j := 0; j < K; j++ {
+		assignment.VecBTest[j] = vecBTest[j]
+	}
+	for j := 0; j < N; j++ {
+		assignment.EncBTest[j] = encBTest[j]
+	}
 	for q, idx := range indices {
 		assignment.Indices[q] = idx
 		copyElementsToVariables(assignment.ColsEncABC[q], abcBlocks[idx])
-		copyElementsToVariables(assignment.TargetXYZ[q], xyzBlocks[idx])
+		copyElementsToVariables(assignment.QueriedEncValues[q], xyzBlocks[idx])
 	}
 }
 
@@ -604,14 +633,17 @@ func verifyTranscript(
 	cmABC fr.Element,
 	cmXYZ fr.Element,
 	challengeR fr.Element,
+	challengeB fr.Element,
 	gamma fr.Element,
 	indices []int,
 	rsPointsX []fr.Element,
 	rsPointW fr.Element,
+	rsPointB fr.Element,
 	N, L int,
 ) {
 	expectedCmABC := crypto.HashElementsMiMC(rootABC)
 	expectedChallengeR := deriveLAMPBATCHChallenge(expectedCmABC, labelChallengeR)
+	expectedChallengeB := deriveLAMPBATCHChallenge(expectedCmABC, labelChallengeB)
 	expectedGamma := deriveLAMPBATCHChallenge(expectedCmABC, labelGamma)
 	expectedCmXYZ := crypto.HashElementsMiMC(rootXYZ)
 	expectedIndices, err := protocol.GenerateUniqueIndicesWithLabel(expectedCmXYZ, labelQueries, N, L)
@@ -619,7 +651,7 @@ func verifyTranscript(
 		log.Fatalf("❌ Query index derivation failed: %v", err)
 	}
 
-	if !cmABC.Equal(&expectedCmABC) || !challengeR.Equal(&expectedChallengeR) || !gamma.Equal(&expectedGamma) || !cmXYZ.Equal(&expectedCmXYZ) {
+	if !cmABC.Equal(&expectedCmABC) || !challengeR.Equal(&expectedChallengeR) || !challengeB.Equal(&expectedChallengeB) || !gamma.Equal(&expectedGamma) || !cmXYZ.Equal(&expectedCmXYZ) {
 		log.Fatal("❌ Transcript derivation failed")
 	}
 	for i := range indices {
@@ -642,6 +674,13 @@ func verifyTranscript(
 	}
 	if !rsPointW.Equal(&expectedRSPointW) {
 		log.Fatal("❌ RS point W derivation failed")
+	}
+	expectedRSPointB, err := protocol.GenerateRSEvaluationPointWithLabel(expectedCmXYZ, labelRSBTest, N, nil)
+	if err != nil {
+		log.Fatalf("❌ RS point B proximity derivation failed: %v", err)
+	}
+	if !rsPointB.Equal(&expectedRSPointB) {
+		log.Fatal("❌ RS point B proximity derivation failed")
 	}
 }
 

@@ -21,19 +21,28 @@ type LAMPBATCHCircuit struct {
 	CmABC      frontend.Variable   `gnark:",public"`
 	CmXYZ      frontend.Variable   `gnark:",public"`
 	ChallengeR frontend.Variable   `gnark:",public"`
+	ChallengeB frontend.Variable   `gnark:",public"`
 	Gamma      frontend.Variable   `gnark:",public"`
 	Indices    []frontend.Variable `gnark:",public"`
 	RSPointsX  []frontend.Variable `gnark:",public"`
 	RSPointW   frontend.Variable   `gnark:",public"`
+	RSPointB   frontend.Variable   `gnark:",public"`
 
+	// For q = Indices[i], ColsEncABC[i] contains each batch item's
+	// [colsEncA[q] || colsEncB[q] || colsEncC[q]] block.
 	ColsEncABC [][]frontend.Variable // [L][3*Batch*K]
-	TargetXYZ  [][]frontend.Variable // [L][Batch+1]
+
+	// For q = Indices[i], QueriedEncValues[i] is
+	// [EncX[0][q], ..., EncX[Batch-1][q], EncW[q], EncBTest[q]].
+	QueriedEncValues [][]frontend.Variable // [L][Batch+2]
 
 	VecX [][]frontend.Variable // [Batch][K]
 	EncX [][]frontend.Variable // [Batch][N]
 
-	VecW []frontend.Variable // [K]
-	EncW []frontend.Variable // [N]
+	VecW     []frontend.Variable // [K]
+	EncW     []frontend.Variable // [N]
+	VecBTest []frontend.Variable // [K]
+	EncBTest []frontend.Variable // [N]
 }
 
 func (c *LAMPBATCHCircuit) Define(api frontend.API) error {
@@ -45,6 +54,7 @@ func (c *LAMPBATCHCircuit) Define(api frontend.API) error {
 
 	L := len(c.Indices)
 	challengeRPowers := Powers(api, c.ChallengeR, c.K)
+	challengeBPowers := Powers(api, c.ChallengeB, c.K)
 	gammaPowers := Powers(api, c.Gamma, c.Batch)
 
 	tX := make([]logderivlookup.Table, c.Batch)
@@ -56,28 +66,34 @@ func (c *LAMPBATCHCircuit) Define(api frontend.API) error {
 	}
 
 	tW := logderivlookup.New(api)
+	tBTest := logderivlookup.New(api)
 	for j := 0; j < c.N; j++ {
 		tW.Insert(c.EncW[j])
+		tBTest.Insert(c.EncBTest[j])
 	}
 
-	// Commit the queried ABC blocks and queried X/W symbols in two grouped rounds.
+	// Commit the queried ABC blocks and queried X/W/B-test symbols in two grouped rounds.
 	if _, err := committer.Commit(FlattenRows(c.ColsEncABC)...); err != nil {
 		return err
 	}
-	if _, err := committer.Commit(FlattenRows(c.TargetXYZ)...); err != nil {
+	if _, err := committer.Commit(FlattenRows(c.QueriedEncValues)...); err != nil {
 		return err
 	}
 
 	for q := 0; q < L; q++ {
 		block := c.ColsEncABC[q]
-		target := c.TargetXYZ[q]
+		target := c.QueriedEncValues[q]
 
 		targetW := target[c.Batch]
+		targetBTest := target[c.Batch+1]
 		exprW := tW.Lookup(c.Indices[q])[0]
+		exprBTest := tBTest.Lookup(c.Indices[q])[0]
 		api.AssertIsEqual(exprW, targetW)
+		api.AssertIsEqual(exprBTest, targetBTest)
 
 		batchB := frontend.Variable(0)
 		batchC := frontend.Variable(0)
+		batchBTest := frontend.Variable(0)
 
 		for b := 0; b < c.Batch; b++ {
 			targetX := target[b]
@@ -92,16 +108,19 @@ func (c *LAMPBATCHCircuit) Define(api frontend.API) error {
 			foldA := Fold(api, challengeRPowers, colsEncA)
 			foldB := Fold(api, c.VecX[b], colsEncB)
 			foldC := Fold(api, challengeRPowers, colsEncC)
+			foldBTest := Fold(api, challengeBPowers, colsEncB)
 
 			api.AssertIsEqual(foldA, targetX)
 
 			coeff := gammaPowers[b]
 			batchB = api.Add(batchB, api.Mul(coeff, foldB))
 			batchC = api.Add(batchC, api.Mul(coeff, foldC))
+			batchBTest = api.Add(batchBTest, api.Mul(coeff, foldBTest))
 		}
 
 		api.AssertIsEqual(batchB, targetW)
 		api.AssertIsEqual(batchC, targetW)
+		api.AssertIsEqual(batchBTest, targetBTest)
 	}
 
 	h.Reset()
@@ -116,6 +135,7 @@ func (c *LAMPBATCHCircuit) Define(api frontend.API) error {
 		VerifyRSEncoding(api, c.K, c.N, c.DomainK, c.WeightsK, c.DomainN, c.WeightsN, c.VecX[b], c.EncX[b], c.RSPointsX[b])
 	}
 	VerifyRSEncoding(api, c.K, c.N, c.DomainK, c.WeightsK, c.DomainN, c.WeightsN, c.VecW, c.EncW, c.RSPointW)
+	VerifyRSEncoding(api, c.K, c.N, c.DomainK, c.WeightsK, c.DomainN, c.WeightsN, c.VecBTest, c.EncBTest, c.RSPointB)
 
 	return nil
 }
