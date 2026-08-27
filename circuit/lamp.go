@@ -21,16 +21,27 @@ type LAMPCircuit struct {
 	CmABC      frontend.Variable   `gnark:",public"`
 	CmXYZ      frontend.Variable   `gnark:",public"`
 	ChallengeR frontend.Variable   `gnark:",public"`
+	ChallengeB frontend.Variable   `gnark:",public"`
 	Indices    []frontend.Variable `gnark:",public"`
 	RSPointX   frontend.Variable   `gnark:",public"`
 	RSPointYZ  frontend.Variable   `gnark:",public"`
+	RSPointB   frontend.Variable   `gnark:",public"`
 
+	// For q = Indices[i], ColsEncABC[i] is
+	// [colsEncA[q] || colsEncB[q] || colsEncC[q]].
 	ColsEncABC [][]frontend.Variable // [L][3K]
-	VecX       []frontend.Variable   // [K]
-	VecYZ      []frontend.Variable   // [K]
-	EncX       []frontend.Variable   // [N]
-	EncYZ      []frontend.Variable   // [N]
-	TargetXYZ  [][]frontend.Variable // [L][2]
+
+	VecX     []frontend.Variable // [K]: (1, r, ..., r^(K-1)) * A
+	VecYZ    []frontend.Variable // [K]: VecX * B
+	VecBTest []frontend.Variable // [K]: (1, b, ..., b^(K-1)) * B
+
+	EncX     []frontend.Variable // [N]: RS encoding of VecX
+	EncYZ    []frontend.Variable // [N]: RS encoding of VecYZ
+	EncBTest []frontend.Variable // [N]: RS encoding of VecBTest
+
+	// For q = Indices[i], QueriedEncValues[i] is
+	// [EncX[q], EncYZ[q], EncBTest[q]].
+	QueriedEncValues [][]frontend.Variable // [L][3]
 }
 
 func (c *LAMPCircuit) Define(api frontend.API) error {
@@ -41,21 +52,24 @@ func (c *LAMPCircuit) Define(api frontend.API) error {
 	}
 	L := len(c.Indices)
 	challengeRPowers := Powers(api, c.ChallengeR, c.K)
+	challengeBPowers := Powers(api, c.ChallengeB, c.K)
 
 	tX := logderivlookup.New(api)
 	tYZ := logderivlookup.New(api)
+	tB := logderivlookup.New(api)
 
-	// Insert X, YZ into lookup tables
+	// Insert X, YZ, and the independent B fold into lookup tables.
 	for j := 0; j < c.N; j++ {
 		tX.Insert(c.EncX[j])
 		tYZ.Insert(c.EncYZ[j])
+		tB.Insert(c.EncBTest[j])
 	}
 
-	// 1. Commit queried A/B/C columns and queried X/YZ scalar values as two grouped rounds.
+	// 1. Commit queried A/B/C columns and queried X/YZ/B-test scalar values as two grouped rounds.
 	if _, err := committer.Commit(FlattenRows(c.ColsEncABC)...); err != nil {
 		return err
 	}
-	if _, err := committer.Commit(FlattenRows(c.TargetXYZ)...); err != nil {
+	if _, err := committer.Commit(FlattenRows(c.QueriedEncValues)...); err != nil {
 		return err
 	}
 
@@ -63,22 +77,27 @@ func (c *LAMPCircuit) Define(api frontend.API) error {
 		colsEncA := c.ColsEncABC[i][:c.K]
 		colsEncB := c.ColsEncABC[i][c.K : 2*c.K]
 		colsEncC := c.ColsEncABC[i][2*c.K : 3*c.K]
-		targetEncX := c.TargetXYZ[i][0]
-		targetEncYZ := c.TargetXYZ[i][1]
+		targetEncX := c.QueriedEncValues[i][0]
+		targetEncYZ := c.QueriedEncValues[i][1]
+		targetEncB := c.QueriedEncValues[i][2]
 
 		exprEncX := tX.Lookup(c.Indices[i])[0]
 		exprEncYZ := tYZ.Lookup(c.Indices[i])[0]
+		exprEncB := tB.Lookup(c.Indices[i])[0]
 
 		api.AssertIsEqual(exprEncX, targetEncX)
 		api.AssertIsEqual(exprEncYZ, targetEncYZ)
+		api.AssertIsEqual(exprEncB, targetEncB)
 
 		foldA := Fold(api, challengeRPowers, colsEncA) // x = r * A
 		foldB := Fold(api, c.VecX, colsEncB)           // y = x * B
 		foldC := Fold(api, challengeRPowers, colsEncC) // z = r * C
+		foldBTest := Fold(api, challengeBPowers, colsEncB)
 
 		api.AssertIsEqual(foldA, targetEncX)
 		api.AssertIsEqual(foldB, targetEncYZ)
 		api.AssertIsEqual(foldC, targetEncYZ)
+		api.AssertIsEqual(foldBTest, targetEncB)
 	}
 
 	// 2. Verify Hashes
@@ -90,9 +109,10 @@ func (c *LAMPCircuit) Define(api frontend.API) error {
 	h.Write(c.RootXYZ)
 	api.AssertIsEqual(c.CmXYZ, h.Sum())
 
-	// 3. Verify Reed-Solomon encoding for X, YZ at transcript-derived out-of-domain points.
+	// 3. Verify Reed-Solomon encoding for X, YZ, and the independent B fold.
 	VerifyRSEncoding(api, c.K, c.N, c.DomainK, c.WeightsK, c.DomainN, c.WeightsN, c.VecX, c.EncX, c.RSPointX)
 	VerifyRSEncoding(api, c.K, c.N, c.DomainK, c.WeightsK, c.DomainN, c.WeightsN, c.VecYZ, c.EncYZ, c.RSPointYZ)
+	VerifyRSEncoding(api, c.K, c.N, c.DomainK, c.WeightsK, c.DomainN, c.WeightsN, c.VecBTest, c.EncBTest, c.RSPointB)
 
 	return nil
 }

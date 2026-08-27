@@ -32,6 +32,9 @@ const (
 
 const (
 	merkleMulti = "multi"
+
+	challengeBLabel uint64 = 1
+	rsPointBLabel   uint64 = 3
 )
 
 func main() {
@@ -109,12 +112,14 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.L
 			ColsEncABC: make([][]frontend.Variable, L),
 			Indices:    make([]frontend.Variable, L),
 			VecX:       make([]frontend.Variable, K), VecYZ: make([]frontend.Variable, K),
-			EncX: make([]frontend.Variable, N), EncYZ: make([]frontend.Variable, N),
-			TargetXYZ: make([][]frontend.Variable, L),
+			VecBTest: make([]frontend.Variable, K),
+			EncX:     make([]frontend.Variable, N), EncYZ: make([]frontend.Variable, N),
+			EncBTest:         make([]frontend.Variable, N),
+			QueriedEncValues: make([][]frontend.Variable, L),
 		}
 		for i := 0; i < L; i++ {
 			emptyCircuit.ColsEncABC[i] = make([]frontend.Variable, 3*K)
-			emptyCircuit.TargetXYZ[i] = make([]frontend.Variable, 2)
+			emptyCircuit.QueriedEncValues[i] = make([]frontend.Variable, 3)
 		}
 
 		r1csSystem, err := frontend.Compile(field, r1cs.NewBuilder, emptyCircuit)
@@ -144,7 +149,7 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.L
 	var cpLinkSetupTime float64
 	startProtocolSetup := time.Now()
 	ckABC := crypto.SetupCommitKey(3 * K)
-	ckXYZ := crypto.SetupCommitKey(2)
+	ckXYZ := crypto.SetupCommitKey(3)
 	encoder := crypto.NewEncoder(K, N)
 	protocolSetupTime += time.Since(startProtocolSetup).Seconds()
 
@@ -202,25 +207,36 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.L
 	CmABC := crypto.HashElementsMiMC(rootABC)
 	ChallengeR := crypto.HashElements(CmABC)
 	ChallengeRPowers := matrix.Powers(ChallengeR, K)
+	ChallengeB := crypto.HashElements(CmABC, uint64Element(challengeBLabel))
+	ChallengeBPowers := matrix.Powers(ChallengeB, K)
 	matCommitTime := time.Since(startMatCommit).Seconds()
 
 	// =========================================================================
-	// 3. Compute vector x, yz = x*B & their commitments
+	// 3. Compute x, yz = x*B, and an independent structured fold of B.
 	// =========================================================================
 	startVecCommit := time.Now()
 	vecX := matrix.VecMatMul(ChallengeRPowers, matA, K)
 	vecYZ := matrix.VecMatMul(vecX, matB, K)
+	vecBTest := matrix.VecMatMul(ChallengeBPowers, matB, K)
 
 	_, encX, _ := encoder.Encode(vecX)
 	_, encYZ, _ := encoder.Encode(vecYZ)
+	_, encBTest, err := encoder.Encode(vecBTest)
+	if err != nil {
+		log.Fatalf("❌ B proximity vector encoding failed: %v", err)
+	}
 
-	colsXYZ := combineXYZScalars(encX, encYZ)
+	colsXYZ := combineXYZScalars(encX, encYZ, encBTest)
 	leavesXYZ, blXYZ := crypto.BatchPedersenCommitBlinded(colsXYZ, ckXYZ)
 	treeXYZ, rootXYZ := crypto.BuildMerkleTreeFromGroupElements(leavesXYZ, depth)
 
 	CmXYZ := crypto.HashElementsMiMC(rootXYZ)
 	indices, _ := crypto.GenerateUniqueIndices(CmXYZ, N, L)
 	rsPointX, rsPointYZ, _ := protocol.GenerateRSEvaluationPoints(CmXYZ, N)
+	rsPointB, err := protocol.GenerateRSEvaluationPointWithLabel(CmXYZ, rsPointBLabel, N, nil)
+	if err != nil {
+		log.Fatalf("❌ B proximity evaluation-point derivation failed: %v", err)
+	}
 	vecCommitTime := time.Since(startVecCommit).Seconds()
 
 	// =========================================================================
@@ -244,12 +260,14 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.L
 		ColsEncABC: make([][]frontend.Variable, L),
 		Indices:    make([]frontend.Variable, L),
 		VecX:       make([]frontend.Variable, K), VecYZ: make([]frontend.Variable, K),
-		EncX: make([]frontend.Variable, N), EncYZ: make([]frontend.Variable, N),
-		TargetXYZ: make([][]frontend.Variable, L),
+		VecBTest: make([]frontend.Variable, K),
+		EncX:     make([]frontend.Variable, N), EncYZ: make([]frontend.Variable, N),
+		EncBTest:         make([]frontend.Variable, N),
+		QueriedEncValues: make([][]frontend.Variable, L),
 	}
 	for i := 0; i < L; i++ {
 		emptyCircuit.ColsEncABC[i] = make([]frontend.Variable, 3*K)
-		emptyCircuit.TargetXYZ[i] = make([]frontend.Variable, 2)
+		emptyCircuit.QueriedEncValues[i] = make([]frontend.Variable, 3)
 	}
 
 	r1csSystem, _ := frontend.Compile(field, r1cs.NewBuilder, emptyCircuit)
@@ -267,26 +285,31 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.L
 		DomainK: rootsK, WeightsK: weightsK,
 		DomainN: rootsN, WeightsN: weightsN,
 		RootABC: rootABC, RootXYZ: rootXYZ, CmABC: CmABC, CmXYZ: CmXYZ,
-		ChallengeR: ChallengeR, RSPointX: rsPointX, RSPointYZ: rsPointYZ,
+		ChallengeR: ChallengeR, ChallengeB: ChallengeB,
+		RSPointX: rsPointX, RSPointYZ: rsPointYZ, RSPointB: rsPointB,
 		ColsEncABC: make([][]frontend.Variable, L),
 		Indices:    make([]frontend.Variable, L),
 		VecX:       make([]frontend.Variable, K), VecYZ: make([]frontend.Variable, K),
-		EncX: make([]frontend.Variable, N), EncYZ: make([]frontend.Variable, N),
-		TargetXYZ: make([][]frontend.Variable, L),
+		VecBTest: make([]frontend.Variable, K),
+		EncX:     make([]frontend.Variable, N), EncYZ: make([]frontend.Variable, N),
+		EncBTest:         make([]frontend.Variable, N),
+		QueriedEncValues: make([][]frontend.Variable, L),
 	}
 
 	for i := 0; i < K; i++ {
 		assignment.VecX[i] = vecX[i]
 		assignment.VecYZ[i] = vecYZ[i]
+		assignment.VecBTest[i] = vecBTest[i]
 	}
 	for i := 0; i < N; i++ {
 		assignment.EncX[i] = encX[i]
 		assignment.EncYZ[i] = encYZ[i]
+		assignment.EncBTest[i] = encBTest[i]
 	}
 
 	for i, idx := range indices {
 		assignment.Indices[i] = idx
-		assignment.TargetXYZ[i] = []frontend.Variable{encX[idx], encYZ[idx]}
+		assignment.QueriedEncValues[i] = []frontend.Variable{encX[idx], encYZ[idx], encBTest[idx]}
 		assignment.ColsEncABC[i] = make([]frontend.Variable, 3*K)
 		for j := 0; j < K; j++ {
 			assignment.ColsEncABC[i][j] = colsEncA[idx][j]
@@ -305,13 +328,13 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.L
 	for i, ck := range proverWithPK.CK2 {
 		if len(ck.G) == 3*L*K {
 			columnCommitIndex = i
-		} else if len(ck.G) == 2*L {
+		} else if len(ck.G) == 3*L {
 			scalarCommitIndex = i
 		}
 	}
 
 	if columnCommitIndex < 0 || scalarCommitIndex < 0 {
-		log.Fatalf("❌ Grouped commitment mismatch: expected grouped column len=%d and scalar len=%d", 3*L*K, 2*L)
+		log.Fatalf("❌ Grouped commitment mismatch: expected grouped column len=%d and scalar len=%d", 3*L*K, 3*L)
 	}
 
 	var columnLinkPK crypto.QALinkProvingKey
@@ -319,11 +342,11 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.L
 	var scalarLinkPK crypto.QALinkProvingKey
 	var scalarLinkVK crypto.QALinkVerifyingKey
 	startCPLinkSetup := time.Now()
-	columnLinkPK, columnLinkVK, err := crypto.SetupQALink(L, 3*K, proverWithPK.CK2[columnCommitIndex], ckABC)
+	columnLinkPK, columnLinkVK, err = crypto.SetupQALink(L, 3*K, proverWithPK.CK2[columnCommitIndex], ckABC)
 	if err != nil {
 		log.Fatalf("❌ Column QA-link setup failed: %v", err)
 	}
-	scalarLinkPK, scalarLinkVK, err = crypto.SetupQALink(L, 2, proverWithPK.CK2[scalarCommitIndex], ckXYZ)
+	scalarLinkPK, scalarLinkVK, err = crypto.SetupQALink(L, 3, proverWithPK.CK2[scalarCommitIndex], ckXYZ)
 	if err != nil {
 		log.Fatalf("❌ Scalar QA-link setup failed: %v", err)
 	}
@@ -372,7 +395,7 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.L
 	scalarExternalCommitments := make([]bn254.G1Affine, 0, L)
 	scalarExternalBlindings := make([]fr.Element, 0, L)
 	for _, idx := range indices {
-		scalarBlocks = append(scalarBlocks, []fr.Element{encX[idx], encYZ[idx]})
+		scalarBlocks = append(scalarBlocks, []fr.Element{encX[idx], encYZ[idx], encBTest[idx]})
 		scalarExternalCommitments = append(scalarExternalCommitments, leavesXYZ[idx])
 		scalarExternalBlindings = append(scalarExternalBlindings, blXYZ[idx])
 	}
@@ -409,10 +432,15 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.L
 	startVerify := time.Now()
 	expectedCmABC := crypto.HashElementsMiMC(rootABC)
 	expectedChallengeR := crypto.HashElements(expectedCmABC)
+	expectedChallengeB := crypto.HashElements(expectedCmABC, uint64Element(challengeBLabel))
 	expectedCmXYZ := crypto.HashElementsMiMC(rootXYZ)
 	expectedIndices, _ := crypto.GenerateUniqueIndices(expectedCmXYZ, N, L)
 	expectedRSPointX, expectedRSPointYZ, _ := protocol.GenerateRSEvaluationPoints(expectedCmXYZ, N)
-	if !CmABC.Equal(&expectedCmABC) || !ChallengeR.Equal(&expectedChallengeR) || !CmXYZ.Equal(&expectedCmXYZ) || !rsPointX.Equal(&expectedRSPointX) || !rsPointYZ.Equal(&expectedRSPointYZ) {
+	expectedRSPointB, err := protocol.GenerateRSEvaluationPointWithLabel(expectedCmXYZ, rsPointBLabel, N, nil)
+	if err != nil {
+		log.Fatalf("❌ B proximity evaluation-point re-derivation failed: %v", err)
+	}
+	if !CmABC.Equal(&expectedCmABC) || !ChallengeR.Equal(&expectedChallengeR) || !ChallengeB.Equal(&expectedChallengeB) || !CmXYZ.Equal(&expectedCmXYZ) || !rsPointX.Equal(&expectedRSPointX) || !rsPointYZ.Equal(&expectedRSPointYZ) || !rsPointB.Equal(&expectedRSPointB) {
 		log.Fatal("❌ Transcript derivation failed")
 	}
 	for i := range indices {
@@ -526,10 +554,10 @@ func combineABCColumn(a, b, c []fr.Element, blockLen int) []fr.Element {
 	return out
 }
 
-func combineXYZScalars(x, yz []fr.Element) [][]fr.Element {
+func combineXYZScalars(x, yz, bTest []fr.Element) [][]fr.Element {
 	out := make([][]fr.Element, len(x))
 	for i := range x {
-		out[i] = []fr.Element{x[i], yz[i]}
+		out[i] = []fr.Element{x[i], yz[i], bTest[i]}
 	}
 	return out
 }
