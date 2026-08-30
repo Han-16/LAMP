@@ -104,19 +104,23 @@ type claimSpec struct {
 }
 
 type claimWitness struct {
-	spec       claimSpec
-	vecX       []fr.Element
-	vecYZ      []fr.Element
-	encX       []fr.Element
-	encYZ      []fr.Element
-	foldX      *foldedCodeword
-	foldYZ     *foldedCodeword
-	indicesIn  []int
-	indicesOut []int
-	rsPointX   fr.Element
-	rsPointYZ  fr.Element
-	skipRSX    bool
-	skipRSYZ   bool
+	spec           claimSpec
+	vecX           []fr.Element
+	vecYZ          []fr.Element
+	vecBTest       []fr.Element
+	encX           []fr.Element
+	encYZ          []fr.Element
+	encBTest       []fr.Element
+	foldX          *foldedCodeword
+	foldYZ         *foldedCodeword
+	foldBTest      *foldedCodeword
+	indicesIn      []int
+	indicesOut     []int
+	rsPointX       fr.Element
+	rsPointYZ      fr.Element
+	skipRSX        bool
+	skipRSYZ       bool
+	bTestRSBatched bool
 }
 
 type rsBatchTermWitness struct {
@@ -432,13 +436,15 @@ func prepareLayer(seqLog int, rho string, L int) *preparedLayer {
 	}
 	p.tensorCm = crypto.HashElementsMiMC(p.extGroups[groupS].root, p.extGroups[groupD].root, p.extGroups[groupDh].root, p.extGroups[groupM].root)
 
+	challengeB := challengeForBProximity(p.tensorCm)
 	for _, spec := range specs {
-		p.claims = append(p.claims, p.prepareClaim(spec))
+		p.claims = append(p.claims, p.prepareClaim(spec, challengeB))
 	}
 	p.buildGroupTree(groupScalar)
 	p.globalCm = crypto.HashElementsMiMC(p.extGroups[groupS].root, p.extGroups[groupD].root, p.extGroups[groupDh].root, p.extGroups[groupM].root, p.extGroups[groupScalar].root)
 
 	p.addScoreValueRSBatches()
+	p.addBProximityRSBatches()
 	for i := range p.claims {
 		p.sampleClaim(&p.claims[i])
 	}
@@ -474,6 +480,7 @@ func prepareLayerShapeOnly(seqLog int, rho string, L int) *preparedLayer {
 		p.claims = append(p.claims, claimWitness{spec: spec})
 	}
 	p.addScoreValueRSBatches()
+	p.addBProximityRSBatches()
 	p.addPackedAttentionChecks(tensors, L)
 	return p
 }
@@ -669,11 +676,13 @@ func (p *preparedLayer) buildGroupTree(groupID int) {
 	group.depth = depth
 }
 
-func (p *preparedLayer) prepareClaim(spec claimSpec) claimWitness {
+func (p *preparedLayer) prepareClaim(spec claimSpec, challengeB fr.Element) claimWitness {
 	challenge := challengeForClaim(p.tensorCm, spec.id)
 	powers := matrix.Powers(challenge, spec.A.rows)
+	bPowers := matrix.Powers(challengeB, spec.B.rows)
 	vecX := matrix.VecMatMulRect(powers, spec.A.data, spec.A.rows, spec.A.cols)
 	vecYZ := matrix.VecMatMulRect(vecX, spec.B.data, spec.B.rows, spec.B.cols)
+	vecBTest := matrix.VecMatMulRect(bPowers, spec.B.data, spec.B.rows, spec.B.cols)
 
 	encoderIn := crypto.NewEncoder(spec.A.cols, codewordLength(spec.A.cols, p.rho))
 	encoderOut := crypto.NewEncoder(spec.C.cols, codewordLength(spec.C.cols, p.rho))
@@ -685,11 +694,20 @@ func (p *preparedLayer) prepareClaim(spec claimSpec) claimWitness {
 	if err != nil {
 		log.Fatalf("failed to encode folded YZ for %s: %v", spec.name, err)
 	}
+	_, encBTest, err := encoderOut.Encode(vecBTest)
+	if err != nil {
+		log.Fatalf("failed to encode B proximity fold for %s: %v", spec.name, err)
+	}
 
 	foldX := p.commitFoldedCodeword(fmt.Sprintf("%s.x", spec.name), encX)
 	foldYZ := p.commitFoldedCodeword(fmt.Sprintf("%s.yz", spec.name), encYZ)
+	foldBTest := p.commitFoldedCodeword(fmt.Sprintf("%s.b_test", spec.name), encBTest)
 
-	return claimWitness{spec: spec, vecX: vecX, vecYZ: vecYZ, encX: encX, encYZ: encYZ, foldX: foldX, foldYZ: foldYZ}
+	return claimWitness{
+		spec: spec, vecX: vecX, vecYZ: vecYZ, vecBTest: vecBTest,
+		encX: encX, encYZ: encYZ, encBTest: encBTest,
+		foldX: foldX, foldYZ: foldYZ, foldBTest: foldBTest,
+	}
 }
 
 func (p *preparedLayer) commitFoldedCodeword(name string, enc []fr.Element) *foldedCodeword {
@@ -760,6 +778,23 @@ func (p *preparedLayer) addScoreValueRSBatches() {
 	p.addRSBatch("value.yz", gpt2Dh, codewordLength(gpt2Dh, p.rho), valueClaims, circuit.LAMPGPT2RSSideYZ)
 }
 
+func (p *preparedLayer) addBProximityRSBatches() {
+	groups := make(map[domainCacheKey][]int)
+	order := make([]domainCacheKey, 0)
+	for i := range p.claims {
+		k := p.claims[i].spec.B.cols
+		key := domainCacheKey{k: k, n: codewordLength(k, p.rho)}
+		if _, ok := groups[key]; !ok {
+			order = append(order, key)
+		}
+		groups[key] = append(groups[key], i)
+	}
+
+	for _, key := range order {
+		p.addRSBatch(fmt.Sprintf("b_test.%d", key.k), key.k, key.n, groups[key], circuit.LAMPGPT2RSSideBTest)
+	}
+}
+
 func (p *preparedLayer) claimIndicesByPrefix(prefix string) []int {
 	indices := make([]int, 0, gpt2Heads)
 	for i := range p.claims {
@@ -817,6 +852,14 @@ func (p *preparedLayer) markClaimRSBatched(claim *claimWitness, claimIndex int, 
 			log.Fatalf("claim %s YZ-side was already assigned to an RS batch", claim.spec.name)
 		}
 		claim.skipRSYZ = true
+	case circuit.LAMPGPT2RSSideBTest:
+		if claim.spec.B.cols != k || codewordLength(claim.spec.B.cols, p.rho) != n {
+			log.Fatalf("invalid B-test side domain for claim %s in RS batch %s", claim.spec.name, batchName)
+		}
+		if claim.bTestRSBatched {
+			log.Fatalf("claim %s B-test side was already assigned to an RS batch", claim.spec.name)
+		}
+		claim.bTestRSBatched = true
 	default:
 		log.Fatalf("unknown RS side %d for claim %d in batch %s", side, claimIndex, batchName)
 	}
@@ -837,6 +880,7 @@ func (p *preparedLayer) addClaimSamples() {
 			p.addTensorSample(claim.spec.C, outCol)
 			p.addScalarSample(claim.foldX, inCol)
 			p.addScalarSample(claim.foldYZ, outCol)
+			p.addScalarSample(claim.foldBTest, outCol)
 		}
 	}
 }
@@ -849,6 +893,10 @@ func challengeForClaim(tensorCm fr.Element, id int) fr.Element {
 	var idElement fr.Element
 	idElement.SetUint64(uint64(id))
 	return crypto.HashElementsMiMC(tensorCm, idElement)
+}
+
+func challengeForBProximity(tensorCm fr.Element) fr.Element {
+	return crypto.HashElementsMiMC(tensorCm, uint64Element(circuit.LAMPGPT2BChallengeTag))
 }
 
 func (p *preparedLayer) addTensorSample(t *tensor, col int) int {
@@ -1156,24 +1204,27 @@ func buildCircuitClaim(p *preparedLayer, w *claimWitness, assignment bool) circu
 		ID: spec.id, Rows: rows, Inner: inner, Cols: cols, NIn: NIn, NOut: NOut,
 		DomainKIn: dIn.domainK, WeightsKIn: dIn.weightsK, DomainNIn: dIn.domainN, WeightsNIn: dIn.weightsN,
 		DomainKOut: dOut.domainK, WeightsKOut: dOut.weightsK, DomainNOut: dOut.domainN, WeightsNOut: dOut.weightsN,
-		IndicesIn:        make([]frontend.Variable, p.L),
-		IndicesOut:       make([]frontend.Variable, p.L),
-		AGroup:           spec.A.group,
-		BGroup:           spec.B.group,
-		CGroup:           spec.C.group,
-		ABlocks:          make([]int, p.L),
-		BBlocks:          make([]int, p.L),
-		CBlocks:          make([]int, p.L),
-		TargetXScalars:   make([]int, p.L),
-		TargetYZScalars:  make([]int, p.L),
-		BindPublicInput:  spec.A.name == "X",
-		BindPublicOutput: spec.C.name == "Out",
-		SkipRSX:          w.skipRSX,
-		SkipRSYZ:         w.skipRSYZ,
-		VecX:             make([]frontend.Variable, inner),
-		VecYZ:            make([]frontend.Variable, cols),
-		EncX:             make([]frontend.Variable, NIn),
-		EncYZ:            make([]frontend.Variable, NOut),
+		IndicesIn:          make([]frontend.Variable, p.L),
+		IndicesOut:         make([]frontend.Variable, p.L),
+		AGroup:             spec.A.group,
+		BGroup:             spec.B.group,
+		CGroup:             spec.C.group,
+		ABlocks:            make([]int, p.L),
+		BBlocks:            make([]int, p.L),
+		CBlocks:            make([]int, p.L),
+		TargetXScalars:     make([]int, p.L),
+		TargetYZScalars:    make([]int, p.L),
+		TargetBTestScalars: make([]int, p.L),
+		BindPublicInput:    spec.A.name == "X",
+		BindPublicOutput:   spec.C.name == "Out",
+		SkipRSX:            w.skipRSX,
+		SkipRSYZ:           w.skipRSYZ,
+		VecX:               make([]frontend.Variable, inner),
+		VecYZ:              make([]frontend.Variable, cols),
+		VecBTest:           make([]frontend.Variable, cols),
+		EncX:               make([]frontend.Variable, NIn),
+		EncYZ:              make([]frontend.Variable, NOut),
+		EncBTest:           make([]frontend.Variable, NOut),
 	}
 
 	for i := 0; i < p.L; i++ {
@@ -1190,6 +1241,7 @@ func buildCircuitClaim(p *preparedLayer, w *claimWitness, assignment bool) circu
 		claim.CBlocks[i] = p.addTensorSample(spec.C, outCol)
 		claim.TargetXScalars[i] = p.addScalarSample(w.foldX, inCol)
 		claim.TargetYZScalars[i] = p.addScalarSample(w.foldYZ, outCol)
+		claim.TargetBTestScalars[i] = p.addScalarSample(w.foldBTest, outCol)
 		if assignment {
 			claim.IndicesIn[i] = w.indicesIn[i]
 			claim.IndicesOut[i] = w.indicesOut[i]
@@ -1213,11 +1265,17 @@ func buildCircuitClaim(p *preparedLayer, w *claimWitness, assignment bool) circu
 		for i := range w.vecYZ {
 			claim.VecYZ[i] = w.vecYZ[i]
 		}
+		for i := range w.vecBTest {
+			claim.VecBTest[i] = w.vecBTest[i]
+		}
 		for i := range w.encX {
 			claim.EncX[i] = w.encX[i]
 		}
 		for i := range w.encYZ {
 			claim.EncYZ[i] = w.encYZ[i]
+		}
+		for i := range w.encBTest {
+			claim.EncBTest[i] = w.encBTest[i]
 		}
 	}
 

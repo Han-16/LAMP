@@ -13,9 +13,13 @@ import (
 const (
 	LAMPGPT2RSSideX = iota
 	LAMPGPT2RSSideYZ
+	LAMPGPT2RSSideBTest
 )
 
-const lampGPT2RSBatchChallengeTag = 73001
+const (
+	lampGPT2RSBatchChallengeTag = 73001
+	LAMPGPT2BChallengeTag       = 73002
+)
 
 type LAMPGPT2Circuit struct {
 	Input  []frontend.Variable `gnark:",public"`
@@ -65,15 +69,18 @@ type LAMPGPT2RectClaim struct {
 	CBlocks                []int
 	TargetXScalars         []int
 	TargetYZScalars        []int
+	TargetBTestScalars     []int
 	BindPublicInput        bool
 	BindPublicOutput       bool
 	SkipRSX                bool
 	SkipRSYZ               bool
 
-	VecX  []frontend.Variable
-	VecYZ []frontend.Variable
-	EncX  []frontend.Variable
-	EncYZ []frontend.Variable
+	VecX     []frontend.Variable
+	VecYZ    []frontend.Variable
+	VecBTest []frontend.Variable
+	EncX     []frontend.Variable
+	EncYZ    []frontend.Variable
+	EncBTest []frontend.Variable
 }
 
 type LAMPGPT2RSBatchTerm struct {
@@ -146,8 +153,19 @@ func (c *LAMPGPT2Circuit) Define(api frontend.API) error {
 	h.Write(c.GroupRoots[0], c.GroupRoots[1], c.GroupRoots[2], c.GroupRoots[3], c.GroupRoots[4])
 	api.AssertIsEqual(c.GlobalCm, h.Sum())
 
+	h.Reset()
+	h.Write(c.TensorCm, LAMPGPT2BChallengeTag)
+	challengeB := h.Sum()
+
+	bPowersByInner := make(map[int][]frontend.Variable)
 	for i := range c.Claims {
-		if err := c.defineClaim(api, &h, &c.Claims[i]); err != nil {
+		inner := c.Claims[i].Inner
+		challengeBPowers, ok := bPowersByInner[inner]
+		if !ok {
+			challengeBPowers = Powers(api, challengeB, inner)
+			bPowersByInner[inner] = challengeBPowers
+		}
+		if err := c.defineClaim(api, &h, &c.Claims[i], challengeBPowers); err != nil {
 			return err
 		}
 	}
@@ -174,7 +192,7 @@ func (c *LAMPGPT2Circuit) Define(api frontend.API) error {
 	return nil
 }
 
-func (c *LAMPGPT2Circuit) defineClaim(api frontend.API, h hash.FieldHasher, claim *LAMPGPT2RectClaim) error {
+func (c *LAMPGPT2Circuit) defineClaim(api frontend.API, h hash.FieldHasher, claim *LAMPGPT2RectClaim, challengeBPowers []frontend.Variable) error {
 	h.Reset()
 	h.Write(c.TensorCm, claim.ID)
 	challengeR := h.Sum()
@@ -182,11 +200,13 @@ func (c *LAMPGPT2Circuit) defineClaim(api frontend.API, h hash.FieldHasher, clai
 
 	tX := logderivlookup.New(api)
 	tYZ := logderivlookup.New(api)
+	tBTest := logderivlookup.New(api)
 	for j := 0; j < claim.NIn; j++ {
 		tX.Insert(claim.EncX[j])
 	}
 	for j := 0; j < claim.NOut; j++ {
 		tYZ.Insert(claim.EncYZ[j])
+		tBTest.Insert(claim.EncBTest[j])
 	}
 
 	for i := 0; i < len(claim.IndicesIn); i++ {
@@ -201,16 +221,21 @@ func (c *LAMPGPT2Circuit) defineClaim(api frontend.API, h hash.FieldHasher, clai
 
 	for i := 0; i < len(claim.IndicesOut); i++ {
 		target := c.Scalars[claim.TargetYZScalars[i]]
+		targetBTest := c.Scalars[claim.TargetBTestScalars[i]]
 		exprEncYZ := tYZ.Lookup(claim.IndicesOut[i])[0]
+		exprEncBTest := tBTest.Lookup(claim.IndicesOut[i])[0]
 		api.AssertIsEqual(exprEncYZ, target)
+		api.AssertIsEqual(exprEncBTest, targetBTest)
 
 		bBlock := c.ColumnGroups[claim.BGroup].Blocks[claim.BBlocks[i]]
 		cBlock := c.ColumnGroups[claim.CGroup].Blocks[claim.CBlocks[i]]
 		foldB := Fold(api, claim.VecX, bBlock)
 		foldC := Fold(api, challengeRPowers, cBlock)
+		foldBTest := Fold(api, challengeBPowers, bBlock)
 
 		api.AssertIsEqual(foldB, target)
 		api.AssertIsEqual(foldC, target)
+		api.AssertIsEqual(foldBTest, targetBTest)
 	}
 
 	if claim.SkipRSX {
@@ -309,6 +334,11 @@ func (c *LAMPGPT2Circuit) rsBatchTermValues(term LAMPGPT2RSBatchTerm, k, n int) 
 			return nil, nil, fmt.Errorf("YZ side domain mismatch for claim %d: got k=%d n=%d expected k=%d n=%d", term.ClaimIndex, claim.Cols, claim.NOut, k, n)
 		}
 		return claim.VecYZ, claim.EncYZ, nil
+	case LAMPGPT2RSSideBTest:
+		if claim.Cols != k || claim.NOut != n {
+			return nil, nil, fmt.Errorf("B-test side domain mismatch for claim %d: got k=%d n=%d expected k=%d n=%d", term.ClaimIndex, claim.Cols, claim.NOut, k, n)
+		}
+		return claim.VecBTest, claim.EncBTest, nil
 	default:
 		return nil, nil, fmt.Errorf("unknown RS side %d", term.Side)
 	}
