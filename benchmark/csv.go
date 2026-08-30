@@ -18,17 +18,29 @@ func EnsureDir(dir string) error {
 }
 
 func initCSV(filename string, header []string) (*os.File, *csv.Writer) {
-	file, err := os.Create(filename)
+	flags := os.O_CREATE | os.O_WRONLY | os.O_TRUNC
+	writeHeader := true
+	appendResults, _ := strconv.ParseBool(os.Getenv("BENCHMARK_APPEND_CSV"))
+	if appendResults {
+		flags = os.O_CREATE | os.O_WRONLY | os.O_APPEND
+		if info, err := os.Stat(filename); err == nil && info.Size() > 0 {
+			writeHeader = false
+		}
+	}
+
+	file, err := os.OpenFile(filename, flags, 0666)
 	if err != nil {
 		log.Fatalf("Failed to create CSV file: %v", err)
 	}
 	writeSystemInfoForCSV(filename)
 
 	writer := csv.NewWriter(file)
-	if err := writer.Write(header); err != nil {
-		log.Fatalf("Failed to write CSV header: %v", err)
+	if writeHeader {
+		if err := writer.Write(header); err != nil {
+			log.Fatalf("Failed to write CSV header: %v", err)
+		}
+		writer.Flush()
 	}
-	writer.Flush()
 
 	return file, writer
 }

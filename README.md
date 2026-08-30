@@ -62,6 +62,11 @@ sh scripts/run_gpt2_bench.sh lamp --range --from 7 --to 10
 Here `--K 10` means square matrix dimension `K=2^10`, and `--seq 7` means GPT-2
 sequence length `2^7`.
 
+Range scripts run one configuration per fresh container, sequentially. No CPU
+or memory limit is applied, so each benchmark process can use all resources
+available to Docker, and each CSV `PeakMemory(B)` value is an independent peak
+RSS measurement.
+
 ## Smoke Tests
 
 Use `--compile` for quick checks. This compiles the circuit and records the
