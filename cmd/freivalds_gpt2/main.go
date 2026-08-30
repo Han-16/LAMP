@@ -134,10 +134,11 @@ func runExperiment(seqLog int, onlyCompile bool) benchmark.FreivaldsGPT2Result {
 		fmt.Printf("Freivalds GPT-2 circuit compiled. Constraints: %d\n", nbConstraints)
 
 		return benchmark.FreivaldsGPT2Result{
-			SeqLog:      seqLog,
-			SeqLen:      seqLen,
-			NumClaims:   len(graph.claims),
-			Constraints: nbConstraints,
+			SeqLog:          seqLog,
+			SeqLen:          seqLen,
+			NumClaims:       len(graph.claims),
+			Constraints:     nbConstraints,
+			PeakMemoryBytes: benchmark.PeakRSSBytes(),
 		}
 	}
 
@@ -199,6 +200,7 @@ func runExperiment(seqLog int, onlyCompile bool) benchmark.FreivaldsGPT2Result {
 		ProveTime:         proveTime,
 		VerifyTime:        verifyTime,
 		ProofSize:         proofSize,
+		PeakMemoryBytes:   benchmark.PeakRSSBytes(),
 	}
 }
 

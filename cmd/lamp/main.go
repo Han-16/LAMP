@@ -131,13 +131,14 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.L
 		fmt.Printf("✅ Circuit compiled successfully! Total Constraints: %d\n", nbConstraints)
 
 		return benchmark.LAMPResult{
-			LogK:        logK,
-			Rho:         rhoStr,
-			Linker:      linkerQALink,
-			Merkle:      merkle,
-			N:           N,
-			NumQueries:  L,
-			Constraints: nbConstraints,
+			LogK:            logK,
+			Rho:             rhoStr,
+			Linker:          linkerQALink,
+			Merkle:          merkle,
+			N:               N,
+			NumQueries:      L,
+			Constraints:     nbConstraints,
+			PeakMemoryBytes: benchmark.PeakRSSBytes(),
 		}
 	}
 
@@ -177,6 +178,7 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.L
 
 	var wg sync.WaitGroup
 	wg.Add(3)
+	startMatrixEncoding := time.Now()
 
 	// Matrix A
 	go func() {
@@ -197,6 +199,7 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.L
 	}()
 
 	wg.Wait()
+	matrixEncodingTime := time.Since(startMatrixEncoding).Seconds()
 	if errA != nil || errB != nil || errC != nil {
 		log.Fatalf("❌ Matrix encoding failed: A=%v B=%v C=%v", errA, errB, errC)
 	}
@@ -209,7 +212,8 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.L
 	ChallengeRPowers := matrix.Powers(ChallengeR, K)
 	ChallengeB := crypto.HashElements(CmABC, uint64Element(challengeBLabel))
 	ChallengeBPowers := matrix.Powers(ChallengeB, K)
-	matCommitTime := time.Since(startMatCommit).Seconds()
+	matrixTotalCommitTime := time.Since(startMatCommit).Seconds()
+	matCommitTime := matrixTotalCommitTime - matrixEncodingTime
 
 	// =========================================================================
 	// 3. Compute x, yz = x*B, and an independent structured fold of B.
@@ -219,9 +223,11 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.L
 	vecYZ := matrix.VecMatMul(vecX, matB, K)
 	vecBTest := matrix.VecMatMul(ChallengeBPowers, matB, K)
 
+	startVectorEncoding := time.Now()
 	_, encX, _ := encoder.Encode(vecX)
 	_, encYZ, _ := encoder.Encode(vecYZ)
 	_, encBTest, err := encoder.Encode(vecBTest)
+	vectorEncodingTime := time.Since(startVectorEncoding).Seconds()
 	if err != nil {
 		log.Fatalf("❌ B proximity vector encoding failed: %v", err)
 	}
@@ -237,7 +243,11 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.L
 	if err != nil {
 		log.Fatalf("❌ B proximity evaluation-point derivation failed: %v", err)
 	}
-	vecCommitTime := time.Since(startVecCommit).Seconds()
+	vectorTotalCommitTime := time.Since(startVecCommit).Seconds()
+	vecCommitTime := vectorTotalCommitTime - vectorEncodingTime
+	encodingTime := matrixEncodingTime + vectorEncodingTime
+	commitTime := matCommitTime + vecCommitTime
+	totalCommitTime := encodingTime + commitTime
 
 	// =========================================================================
 	// 4. Circuit Compile & Setup
@@ -491,7 +501,7 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.L
 	fmt.Printf("   ✅ Verify Time: %s\n", benchmark.FormatDurationSeconds(totalVerifyTime))
 	fmt.Println("✅ ALL BLINDED ZK PROOFS VERIFIED SUCCESSFULLY!")
 
-	totalProveTime := matCommitTime + vecCommitTime + merkleProveTime + circuitProveTime + cpLinkProveTime
+	totalProveTime := totalCommitTime + merkleProveTime + circuitProveTime + cpLinkProveTime
 
 	var buf bytes.Buffer
 	circuitProof.WriteTo(&buf)
@@ -523,6 +533,9 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.L
 		CPLinkSetupTime:   cpLinkSetupTime,
 		MatrixCommitTime:  matCommitTime,
 		VectorCommitTime:  vecCommitTime,
+		EncodingTime:      encodingTime,
+		CommitTime:        commitTime,
+		TotalCommitTime:   totalCommitTime,
 		MerkleProveTime:   merkleProveTime,
 		CircuitProveTime:  circuitProveTime,
 		CPLinkProveTime:   cpLinkProveTime,
@@ -535,6 +548,7 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.L
 		Groth16ProofSize:  groth16ProofSize,
 		CPLinkProofSize:   cpLinkProofSize,
 		TotalProofSize:    totalProofSize,
+		PeakMemoryBytes:   benchmark.PeakRSSBytes(),
 	}
 }
 

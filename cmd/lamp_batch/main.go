@@ -149,14 +149,15 @@ func runExperiment(logK int, rhoStr string, L int, batch int, onlyCompile bool) 
 		fmt.Printf("✅ Circuit compiled successfully! Total Constraints: %d\n", nbConstraints)
 
 		return benchmark.LAMPBATCHResult{
-			LogK:        logK,
-			Rho:         rhoStr,
-			Linker:      linkerQALink,
-			Merkle:      merkle,
-			Batch:       batch,
-			N:           N,
-			NumQueries:  L,
-			Constraints: nbConstraints,
+			LogK:            logK,
+			Rho:             rhoStr,
+			Linker:          linkerQALink,
+			Merkle:          merkle,
+			Batch:           batch,
+			N:               N,
+			NumQueries:      L,
+			Constraints:     nbConstraints,
+			PeakMemoryBytes: benchmark.PeakRSSBytes(),
 		}
 	}
 
@@ -184,7 +185,9 @@ func runExperiment(logK int, rhoStr string, L int, batch int, onlyCompile bool) 
 	fmt.Printf("   ✅ Matrix Compute Time: %.2f s\n", matrixComputeTime)
 
 	startMatCommit := time.Now()
+	startMatrixEncoding := time.Now()
 	encodeBatchProducts(products, encoder)
+	matrixEncodingTime := time.Since(startMatrixEncoding).Seconds()
 	abcBlocks := buildABCBlocks(products, N, K)
 	leavesABC, blABC := crypto.BatchPedersenCommitBlinded(abcBlocks, ckABC)
 	treeABC, rootABC := crypto.BuildMerkleTreeFromGroupElements(leavesABC, depth)
@@ -196,14 +199,18 @@ func runExperiment(logK int, rhoStr string, L int, batch int, onlyCompile bool) 
 	rPowers := matrix.Powers(challengeR, K)
 	bPowers := matrix.Powers(challengeB, K)
 	gammaPowers := matrix.Powers(gamma, batch)
-	matCommitTime := time.Since(startMatCommit).Seconds()
+	matrixTotalCommitTime := time.Since(startMatCommit).Seconds()
+	matCommitTime := matrixTotalCommitTime - matrixEncodingTime
 
 	startVecCommit := time.Now()
+	vectorEncodingTime := 0.0
 	vecW := make([]fr.Element, K)
 	vecBTest := make([]fr.Element, K)
 	for i := range products {
 		products[i].VecX = matrix.VecMatMul(rPowers, products[i].A, K)
+		startEncoding := time.Now()
 		_, encX, err := encoder.Encode(products[i].VecX)
+		vectorEncodingTime += time.Since(startEncoding).Seconds()
 		if err != nil {
 			log.Fatalf("❌ Failed to encode VecX for batch item %d: %v", i, err)
 		}
@@ -215,11 +222,15 @@ func runExperiment(logK int, rhoStr string, L int, batch int, onlyCompile bool) 
 		biTest := matrix.VecMatMul(bPowers, products[i].B, K)
 		addScaledVector(vecBTest, biTest, gammaPowers[i])
 	}
+	startEncoding := time.Now()
 	_, encW, err := encoder.Encode(vecW)
+	vectorEncodingTime += time.Since(startEncoding).Seconds()
 	if err != nil {
 		log.Fatalf("❌ Failed to encode batch output vector: %v", err)
 	}
+	startEncoding = time.Now()
 	_, encBTest, err := encoder.Encode(vecBTest)
+	vectorEncodingTime += time.Since(startEncoding).Seconds()
 	if err != nil {
 		log.Fatalf("❌ Failed to encode batch B proximity vector: %v", err)
 	}
@@ -248,7 +259,11 @@ func runExperiment(logK int, rhoStr string, L int, batch int, onlyCompile bool) 
 	if err != nil {
 		log.Fatalf("❌ Failed to sample RS point for B proximity: %v", err)
 	}
-	vecCommitTime := time.Since(startVecCommit).Seconds()
+	vectorTotalCommitTime := time.Since(startVecCommit).Seconds()
+	vecCommitTime := vectorTotalCommitTime - vectorEncodingTime
+	encodingTime := matrixEncodingTime + vectorEncodingTime
+	commitTime := matCommitTime + vecCommitTime
+	totalCommitTime := encodingTime + commitTime
 
 	fmt.Println("=== Circuit Setup & Prove ===")
 	startDomainSetup := time.Now()
@@ -402,7 +417,7 @@ func runExperiment(logK int, rhoStr string, L int, batch int, onlyCompile bool) 
 	fmt.Printf("   ✅ Verify Time: %s\n", benchmark.FormatDurationSeconds(totalVerifyTime))
 	fmt.Println("✅ ALL LAMPBATCH PROOFS VERIFIED SUCCESSFULLY!")
 
-	totalProveTime := matCommitTime + vecCommitTime + merkleProveTime + circuitProveTime + cpLinkProveTime
+	totalProveTime := totalCommitTime + merkleProveTime + circuitProveTime + cpLinkProveTime
 
 	var buf bytes.Buffer
 	circuitProof.WriteTo(&buf)
@@ -434,6 +449,9 @@ func runExperiment(logK int, rhoStr string, L int, batch int, onlyCompile bool) 
 		CPLinkSetupTime:   cpLinkSetupTime,
 		MatrixCommitTime:  matCommitTime,
 		VectorCommitTime:  vecCommitTime,
+		EncodingTime:      encodingTime,
+		CommitTime:        commitTime,
+		TotalCommitTime:   totalCommitTime,
 		MerkleProveTime:   merkleProveTime,
 		CircuitProveTime:  circuitProveTime,
 		CPLinkProveTime:   cpLinkProveTime,
@@ -446,6 +464,7 @@ func runExperiment(logK int, rhoStr string, L int, batch int, onlyCompile bool) 
 		Groth16ProofSize:  groth16ProofSize,
 		CPLinkProofSize:   cpLinkProofSize,
 		TotalProofSize:    totalProofSize,
+		PeakMemoryBytes:   benchmark.PeakRSSBytes(),
 	}
 }
 

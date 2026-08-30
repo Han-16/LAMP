@@ -85,8 +85,9 @@ func runExperiment(logK int, onlyCompile bool) benchmark.FreivaldsResult {
 		fmt.Printf("✅ Circuit compiled successfully! Total Constraints: %d\n", nbConstraints)
 
 		return benchmark.FreivaldsResult{
-			LogK:        logK,
-			Constraints: nbConstraints,
+			LogK:            logK,
+			Constraints:     nbConstraints,
+			PeakMemoryBytes: benchmark.PeakRSSBytes(),
 		}
 	}
 
@@ -184,6 +185,7 @@ func runExperiment(logK int, onlyCompile bool) benchmark.FreivaldsResult {
 		ProveTime:         proveTime,
 		VerifyTime:        verifyTime,
 		ProofSize:         proofSize,
+		PeakMemoryBytes:   benchmark.PeakRSSBytes(),
 	}
 }
 

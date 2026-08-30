@@ -54,6 +54,7 @@ type FreivaldsResult struct {
 	ProveTime         float64
 	VerifyTime        float64
 	ProofSize         int
+	PeakMemoryBytes   uint64
 }
 
 type FreivaldsBatchResult struct {
@@ -65,6 +66,7 @@ type FreivaldsBatchResult struct {
 	ProveTime         float64
 	VerifyTime        float64
 	ProofSize         int
+	PeakMemoryBytes   uint64
 }
 
 type LAMPResult struct {
@@ -82,6 +84,9 @@ type LAMPResult struct {
 	CPLinkSetupTime   float64
 	MatrixCommitTime  float64
 	VectorCommitTime  float64
+	EncodingTime      float64
+	CommitTime        float64
+	TotalCommitTime   float64
 	MerkleProveTime   float64
 	CircuitProveTime  float64
 	CPLinkProveTime   float64
@@ -94,6 +99,7 @@ type LAMPResult struct {
 	Groth16ProofSize  int
 	CPLinkProofSize   int
 	TotalProofSize    int
+	PeakMemoryBytes   uint64
 }
 
 type LAMPBATCHResult struct {
@@ -112,6 +118,9 @@ type LAMPBATCHResult struct {
 	CPLinkSetupTime   float64
 	MatrixCommitTime  float64
 	VectorCommitTime  float64
+	EncodingTime      float64
+	CommitTime        float64
+	TotalCommitTime   float64
 	MerkleProveTime   float64
 	CircuitProveTime  float64
 	CPLinkProveTime   float64
@@ -124,6 +133,7 @@ type LAMPBATCHResult struct {
 	Groth16ProofSize  int
 	CPLinkProofSize   int
 	TotalProofSize    int
+	PeakMemoryBytes   uint64
 }
 
 type LAMPGPT2Result struct {
@@ -141,7 +151,9 @@ type LAMPGPT2Result struct {
 	ProtocolSetupTime float64
 	CircuitSetupTime  float64
 	CPLinkSetupTime   float64
+	EncodingTime      float64
 	CommitTime        float64
+	TotalCommitTime   float64
 	MerkleProveTime   float64
 	CircuitProveTime  float64
 	CPLinkProveTime   float64
@@ -154,6 +166,7 @@ type LAMPGPT2Result struct {
 	Groth16ProofSize  int
 	CPLinkProofSize   int
 	TotalProofSize    int
+	PeakMemoryBytes   uint64
 }
 
 type FreivaldsGPT2Result struct {
@@ -166,12 +179,13 @@ type FreivaldsGPT2Result struct {
 	ProveTime         float64
 	VerifyTime        float64
 	ProofSize         int
+	PeakMemoryBytes   uint64
 }
 
 // --- Freivalds Benchmark ---
 func InitFreivaldsCSV(filename string) (*os.File, *csv.Writer) {
 	return initCSV(filename, []string{
-		"log(K)", "Constraint", "MatrixComputeTime (s/ms)", "Setup (s/ms)", "Prove (s/ms)", "Verify (s/ms)", "ProofSize(B)",
+		"log(K)", "Constraint", "MatrixComputeTime (s/ms)", "Setup (s/ms)", "Prove (s/ms)", "Verify (s/ms)", "ProofSize(B)", "PeakMemory(B)",
 	})
 }
 
@@ -184,13 +198,14 @@ func AppendFreivaldsResultToCSV(writer *csv.Writer, res FreivaldsResult) {
 		formatSeconds(res.ProveTime),
 		formatSeconds(res.VerifyTime),
 		strconv.Itoa(res.ProofSize),
+		strconv.FormatUint(res.PeakMemoryBytes, 10),
 	}
 	appendCSV(writer, record, fmt.Sprintf("logK=%d", res.LogK))
 }
 
 func InitFreivaldsBatchCSV(filename string) (*os.File, *csv.Writer) {
 	return initCSV(filename, []string{
-		"log(K)", "Batch", "Constraint", "MatrixComputeTime (s/ms)", "Setup (s/ms)", "Prove (s/ms)", "Verify (s/ms)", "ProofSize(B)",
+		"log(K)", "Batch", "Constraint", "MatrixComputeTime (s/ms)", "Setup (s/ms)", "Prove (s/ms)", "Verify (s/ms)", "ProofSize(B)", "PeakMemory(B)",
 	})
 }
 
@@ -204,6 +219,7 @@ func AppendFreivaldsBatchResultToCSV(writer *csv.Writer, res FreivaldsBatchResul
 		formatSeconds(res.ProveTime),
 		formatSeconds(res.VerifyTime),
 		strconv.Itoa(res.ProofSize),
+		strconv.FormatUint(res.PeakMemoryBytes, 10),
 	}
 	appendCSV(writer, record, fmt.Sprintf("Freivalds batch: logK=%d, batch=%d, constraints=%d", res.LogK, res.Batch, res.Constraints))
 }
@@ -213,10 +229,12 @@ func InitLAMPCSV(filename string) (*os.File, *csv.Writer) {
 		"LogK", "Rho", "Linker", "Merkle", "N", "NumQueries", "Constraints",
 		"MatrixComputeTime(s/ms)", "SetupTime(s/ms)",
 		"ProtocolSetupTime(s/ms)", "CircuitSetupTime(s/ms)", "CPLinkSetupTime(s/ms)",
-		"MatrixCommitTime(s/ms)", "VectorCommitTime(s/ms)", "MerkleProveTime(s/ms)", "CircuitProveTime(s/ms)",
+		"MatrixCommitTime(s/ms)", "VectorCommitTime(s/ms)",
+		"EncodingTime(s/ms)", "CommitTime(s/ms)", "TotalCommitTime(s/ms)",
+		"MerkleProveTime(s/ms)", "CircuitProveTime(s/ms)",
 		"CPLinkProveTime(s/ms)", "TotalProveTime(s/ms)",
 		"CircuitVerifyTime(s/ms)", "MerkleVerifyTime(s/ms)", "CPLinkVerifyTime(s/ms)", "TotalVerifyTime(s/ms)",
-		"MerkleProofSize(B)", "Groth16ProofSize(B)", "CPLinkProofSize(B)", "TotalProofSize(B)",
+		"MerkleProofSize(B)", "Groth16ProofSize(B)", "CPLinkProofSize(B)", "TotalProofSize(B)", "PeakMemory(B)",
 	})
 }
 
@@ -236,6 +254,9 @@ func AppendLAMPResultToCSV(writer *csv.Writer, res LAMPResult) {
 		formatSeconds(res.CPLinkSetupTime),
 		formatSeconds(res.MatrixCommitTime),
 		formatSeconds(res.VectorCommitTime),
+		formatSeconds(res.EncodingTime),
+		formatSeconds(res.CommitTime),
+		formatSeconds(res.TotalCommitTime),
 		formatSeconds(res.MerkleProveTime),
 		formatSeconds(res.CircuitProveTime),
 		formatSeconds(res.CPLinkProveTime),
@@ -248,6 +269,7 @@ func AppendLAMPResultToCSV(writer *csv.Writer, res LAMPResult) {
 		strconv.Itoa(res.Groth16ProofSize),
 		strconv.Itoa(res.CPLinkProofSize),
 		strconv.Itoa(res.TotalProofSize),
+		strconv.FormatUint(res.PeakMemoryBytes, 10),
 	}
 	appendCSV(writer, record, fmt.Sprintf("LAMP Protocol: logK=%d, rho=%s, linker=%s, merkle=%s, L=%d, constraints=%d", res.LogK, res.Rho, res.Linker, res.Merkle, res.NumQueries, res.Constraints))
 }
@@ -257,10 +279,12 @@ func InitLAMPBATCHCSV(filename string) (*os.File, *csv.Writer) {
 		"LogK", "Rho", "Linker", "Merkle", "Batch", "N", "NumQueries", "Constraints",
 		"MatrixComputeTime(s/ms)", "SetupTime(s/ms)",
 		"ProtocolSetupTime(s/ms)", "CircuitSetupTime(s/ms)", "CPLinkSetupTime(s/ms)",
-		"MatrixCommitTime(s/ms)", "VectorCommitTime(s/ms)", "MerkleProveTime(s/ms)", "CircuitProveTime(s/ms)",
+		"MatrixCommitTime(s/ms)", "VectorCommitTime(s/ms)",
+		"EncodingTime(s/ms)", "CommitTime(s/ms)", "TotalCommitTime(s/ms)",
+		"MerkleProveTime(s/ms)", "CircuitProveTime(s/ms)",
 		"CPLinkProveTime(s/ms)", "TotalProveTime(s/ms)",
 		"CircuitVerifyTime(s/ms)", "MerkleVerifyTime(s/ms)", "CPLinkVerifyTime(s/ms)", "TotalVerifyTime(s/ms)",
-		"MerkleProofSize(B)", "Groth16ProofSize(B)", "CPLinkProofSize(B)", "TotalProofSize(B)",
+		"MerkleProofSize(B)", "Groth16ProofSize(B)", "CPLinkProofSize(B)", "TotalProofSize(B)", "PeakMemory(B)",
 	})
 }
 
@@ -281,6 +305,9 @@ func AppendLAMPBATCHResultToCSV(writer *csv.Writer, res LAMPBATCHResult) {
 		formatSeconds(res.CPLinkSetupTime),
 		formatSeconds(res.MatrixCommitTime),
 		formatSeconds(res.VectorCommitTime),
+		formatSeconds(res.EncodingTime),
+		formatSeconds(res.CommitTime),
+		formatSeconds(res.TotalCommitTime),
 		formatSeconds(res.MerkleProveTime),
 		formatSeconds(res.CircuitProveTime),
 		formatSeconds(res.CPLinkProveTime),
@@ -293,6 +320,7 @@ func AppendLAMPBATCHResultToCSV(writer *csv.Writer, res LAMPBATCHResult) {
 		strconv.Itoa(res.Groth16ProofSize),
 		strconv.Itoa(res.CPLinkProofSize),
 		strconv.Itoa(res.TotalProofSize),
+		strconv.FormatUint(res.PeakMemoryBytes, 10),
 	}
 	appendCSV(writer, record, fmt.Sprintf("LAMPBATCH Protocol: logK=%d, rho=%s, linker=%s, merkle=%s, L=%d, batch=%d, constraints=%d", res.LogK, res.Rho, res.Linker, res.Merkle, res.NumQueries, res.Batch, res.Constraints))
 }
@@ -302,10 +330,11 @@ func InitLAMPGPT2CSV(filename string) (*os.File, *csv.Writer) {
 		"SeqLog", "SeqLen", "Rho", "Linker", "Merkle", "NumQueries", "NumClaims", "NumCommitGroups", "Constraints",
 		"MatrixComputeTime(s/ms)", "SetupTime(s/ms)",
 		"ProtocolSetupTime(s/ms)", "CircuitSetupTime(s/ms)", "CPLinkSetupTime(s/ms)",
-		"CommitTime(s/ms)", "MerkleProveTime(s/ms)", "CircuitProveTime(s/ms)",
+		"EncodingTime(s/ms)", "CommitTime(s/ms)", "TotalCommitTime(s/ms)",
+		"MerkleProveTime(s/ms)", "CircuitProveTime(s/ms)",
 		"CPLinkProveTime(s/ms)", "TotalProveTime(s/ms)",
 		"CircuitVerifyTime(s/ms)", "MerkleVerifyTime(s/ms)", "CPLinkVerifyTime(s/ms)", "TotalVerifyTime(s/ms)",
-		"MerkleProofSize(B)", "Groth16ProofSize(B)", "CPLinkProofSize(B)", "TotalProofSize(B)",
+		"MerkleProofSize(B)", "Groth16ProofSize(B)", "CPLinkProofSize(B)", "TotalProofSize(B)", "PeakMemory(B)",
 	})
 }
 
@@ -325,7 +354,9 @@ func AppendLAMPGPT2ResultToCSV(writer *csv.Writer, res LAMPGPT2Result) {
 		formatSeconds(res.ProtocolSetupTime),
 		formatSeconds(res.CircuitSetupTime),
 		formatSeconds(res.CPLinkSetupTime),
+		formatSeconds(res.EncodingTime),
 		formatSeconds(res.CommitTime),
+		formatSeconds(res.TotalCommitTime),
 		formatSeconds(res.MerkleProveTime),
 		formatSeconds(res.CircuitProveTime),
 		formatSeconds(res.CPLinkProveTime),
@@ -338,6 +369,7 @@ func AppendLAMPGPT2ResultToCSV(writer *csv.Writer, res LAMPGPT2Result) {
 		strconv.Itoa(res.Groth16ProofSize),
 		strconv.Itoa(res.CPLinkProofSize),
 		strconv.Itoa(res.TotalProofSize),
+		strconv.FormatUint(res.PeakMemoryBytes, 10),
 	}
 	appendCSV(writer, record, fmt.Sprintf("LAMP GPT-2 medium layer: seq=2^%d, rho=%s, linker=%s, merkle=%s, L=%d, claims=%d, constraints=%d", res.SeqLog, res.Rho, res.Linker, res.Merkle, res.NumQueries, res.NumClaims, res.Constraints))
 }
@@ -345,7 +377,7 @@ func AppendLAMPGPT2ResultToCSV(writer *csv.Writer, res LAMPGPT2Result) {
 func InitFreivaldsGPT2CSV(filename string) (*os.File, *csv.Writer) {
 	return initCSV(filename, []string{
 		"SeqLog", "SeqLen", "NumClaims", "Constraints",
-		"MatrixComputeTime(s/ms)", "SetupTime(s/ms)", "ProveTime(s/ms)", "VerifyTime(s/ms)", "ProofSize(B)",
+		"MatrixComputeTime(s/ms)", "SetupTime(s/ms)", "ProveTime(s/ms)", "VerifyTime(s/ms)", "ProofSize(B)", "PeakMemory(B)",
 	})
 }
 
@@ -360,6 +392,7 @@ func AppendFreivaldsGPT2ResultToCSV(writer *csv.Writer, res FreivaldsGPT2Result)
 		formatSeconds(res.ProveTime),
 		formatSeconds(res.VerifyTime),
 		strconv.Itoa(res.ProofSize),
+		strconv.FormatUint(res.PeakMemoryBytes, 10),
 	}
 	appendCSV(writer, record, fmt.Sprintf("Freivalds GPT-2 medium layer: seq=2^%d, claims=%d, constraints=%d", res.SeqLog, res.NumClaims, res.Constraints))
 }

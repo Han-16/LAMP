@@ -171,7 +171,9 @@ type preparedLayer struct {
 
 	matrixComputeTime float64
 	setupTime         float64
+	encodingTime      float64
 	commitTime        float64
+	totalCommitTime   float64
 	merkleProveTime   float64
 }
 
@@ -255,8 +257,11 @@ func runExperiment(seqLog int, rho string, L int, onlyCompile bool) benchmark.LA
 			MatrixComputeTime: prep.matrixComputeTime,
 			SetupTime:         prep.setupTime,
 			ProtocolSetupTime: prep.setupTime,
+			EncodingTime:      prep.encodingTime,
 			CommitTime:        prep.commitTime,
+			TotalCommitTime:   prep.totalCommitTime,
 			MerkleProveTime:   prep.merkleProveTime,
+			PeakMemoryBytes:   benchmark.PeakRSSBytes(),
 		}
 	}
 
@@ -371,7 +376,7 @@ func runExperiment(seqLog int, rho string, L int, onlyCompile bool) benchmark.LA
 		cpLinkProofSize += crypto.QALinkProofSizeBytes(linkProofs[i])
 	}
 	totalProofSize := groth16ProofSize + merkleProofSize + cpLinkProofSize
-	totalProveTime := prep.commitTime + prep.merkleProveTime + circuitProveTime + cpLinkProveTime
+	totalProveTime := prep.totalCommitTime + prep.merkleProveTime + circuitProveTime + cpLinkProveTime
 
 	fmt.Println("LAMP GPT-2 proof verified successfully")
 	fmt.Printf("Proof sizes: Groth16=%d B, Merkle=%d B, CPLink=%d B, Total=%d B\n", groth16ProofSize, merkleProofSize, cpLinkProofSize, totalProofSize)
@@ -391,7 +396,9 @@ func runExperiment(seqLog int, rho string, L int, onlyCompile bool) benchmark.LA
 		ProtocolSetupTime: protocolSetupTime,
 		CircuitSetupTime:  circuitSetupTime,
 		CPLinkSetupTime:   cpLinkSetupTime,
+		EncodingTime:      prep.encodingTime,
 		CommitTime:        prep.commitTime,
+		TotalCommitTime:   prep.totalCommitTime,
 		MerkleProveTime:   prep.merkleProveTime,
 		CircuitProveTime:  circuitProveTime,
 		CPLinkProveTime:   cpLinkProveTime,
@@ -404,6 +411,7 @@ func runExperiment(seqLog int, rho string, L int, onlyCompile bool) benchmark.LA
 		Groth16ProofSize:  groth16ProofSize,
 		CPLinkProofSize:   cpLinkProofSize,
 		TotalProofSize:    totalProofSize,
+		PeakMemoryBytes:   benchmark.PeakRSSBytes(),
 	}
 }
 
@@ -451,10 +459,12 @@ func prepareLayer(seqLog int, rho string, L int) *preparedLayer {
 	p.addClaimSamples()
 	p.addPackedAttentionChecks(tensors, L)
 	p.generateMerkleMultiProofs()
-	p.commitTime = time.Since(startCommit).Seconds() - p.merkleProveTime
+	p.totalCommitTime = time.Since(startCommit).Seconds() - p.merkleProveTime
+	p.commitTime = p.totalCommitTime - p.encodingTime
 	if p.commitTime < 0 {
 		p.commitTime = 0
 	}
+	p.totalCommitTime = p.encodingTime + p.commitTime
 
 	return p
 }
@@ -652,11 +662,13 @@ func buildGPT2MediumTensorShapes(seqLen int) ([]*tensor, []claimSpec) {
 func (p *preparedLayer) commitTensor(t *tensor, rho string) {
 	n := codewordLength(t.cols, rho)
 	encoder := crypto.NewEncoder(t.cols, n)
+	startEncoding := time.Now()
 	_, enc, err := encoder.EncodeRows(t.data)
 	if err != nil {
 		log.Fatalf("failed to encode tensor %s: %v", t.name, err)
 	}
 	t.colsEnc = matrix.Transpose(enc, t.rows, n)
+	p.encodingTime += time.Since(startEncoding).Seconds()
 	group := p.extGroups[t.group]
 	commits, blindings := crypto.BatchPedersenCommitBlinded(t.colsEnc, group.ck)
 	t.leafStart = len(group.commits)
@@ -686,15 +698,21 @@ func (p *preparedLayer) prepareClaim(spec claimSpec, challengeB fr.Element) clai
 
 	encoderIn := crypto.NewEncoder(spec.A.cols, codewordLength(spec.A.cols, p.rho))
 	encoderOut := crypto.NewEncoder(spec.C.cols, codewordLength(spec.C.cols, p.rho))
+	startEncoding := time.Now()
 	_, encX, err := encoderIn.Encode(vecX)
+	p.encodingTime += time.Since(startEncoding).Seconds()
 	if err != nil {
 		log.Fatalf("failed to encode folded X for %s: %v", spec.name, err)
 	}
+	startEncoding = time.Now()
 	_, encYZ, err := encoderOut.Encode(vecYZ)
+	p.encodingTime += time.Since(startEncoding).Seconds()
 	if err != nil {
 		log.Fatalf("failed to encode folded YZ for %s: %v", spec.name, err)
 	}
+	startEncoding = time.Now()
 	_, encBTest, err := encoderOut.Encode(vecBTest)
+	p.encodingTime += time.Since(startEncoding).Seconds()
 	if err != nil {
 		log.Fatalf("failed to encode B proximity fold for %s: %v", spec.name, err)
 	}
