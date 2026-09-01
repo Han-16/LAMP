@@ -54,6 +54,32 @@ for arg in "$@"; do
 	esac
 done
 
+# Share the RHO -> L mapping with the regular LAMP benchmarks.
+rho="${RHO:-${LAMP_GPT2_RHO:-1/2}}"
+explicit_l="${LAMP_GPT2_L:-}"
+expect_l=false
+expect_rho=false
+for arg in "$@"; do
+	if [ "$expect_l" = true ]; then explicit_l="$arg"; expect_l=false; continue; fi
+	if [ "$expect_rho" = true ]; then rho="$arg"; expect_rho=false; continue; fi
+	case "$arg" in
+		-L|--L) expect_l=true ;;
+		-L=*|--L=*) explicit_l="${arg#*=}" ;;
+		--rho=*|-rho=*) rho="${arg#*=}" ;;
+		--rho|-rho) expect_rho=true ;;
+	esac
+done
+case "$rho" in
+	1/2) default_l=309 ;;
+	1/4) default_l=189 ;;
+	1/8) default_l=155 ;;
+	*) echo "unsupported RHO: $rho" >&2; exit 2 ;;
+esac
+[ -n "$explicit_l" ] || explicit_l="$default_l"
+LAMP_GPT2_RHO="$rho"
+LAMP_GPT2_L="$explicit_l"
+export LAMP_GPT2_RHO LAMP_GPT2_L
+
 is_true() {
 	case "${1:-}" in
 		1|true|TRUE|yes|YES|on|ON) return 0 ;;
