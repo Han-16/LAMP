@@ -85,9 +85,19 @@ func main() {
 func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.LAMPResult {
 	merkle := merkleMulti
 	K := 1 << logK
-	N := K << 1
-	if rhoStr == "1/4" {
+	var N int
+	switch rhoStr {
+	case "1/2":
+		N = K << 1
+	case "1/4":
 		N = K << 2
+	case "1/8":
+		N = K << 3
+	default:
+		log.Fatalf("unsupported rho %q; use 1/2, 1/4, or 1/8", rhoStr)
+	}
+	if L > N {
+		log.Fatalf("L=%d exceeds codeword length N=%d", L, N)
 	}
 	depth := int(math.Log2(float64(N)))
 	field := ecc.BN254.ScalarField()
@@ -237,7 +247,10 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.L
 	treeXYZ, rootXYZ := crypto.BuildMerkleTreeFromGroupElements(leavesXYZ, depth)
 
 	CmXYZ := crypto.HashElementsMiMC(rootXYZ)
-	indices, _ := crypto.GenerateUniqueIndices(CmXYZ, N, L)
+	indices, err := crypto.GenerateUniqueIndices(CmXYZ, N, L)
+	if err != nil {
+		log.Fatalf("❌ Query index derivation failed: %v", err)
+	}
 	rsPointX, rsPointYZ, _ := protocol.GenerateRSEvaluationPoints(CmXYZ, N)
 	rsPointB, err := protocol.GenerateRSEvaluationPointWithLabel(CmXYZ, rsPointBLabel, N, nil)
 	if err != nil {
@@ -444,7 +457,10 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.L
 	expectedChallengeR := crypto.HashElements(expectedCmABC)
 	expectedChallengeB := crypto.HashElements(expectedCmABC, uint64Element(challengeBLabel))
 	expectedCmXYZ := crypto.HashElementsMiMC(rootXYZ)
-	expectedIndices, _ := crypto.GenerateUniqueIndices(expectedCmXYZ, N, L)
+	expectedIndices, err := crypto.GenerateUniqueIndices(expectedCmXYZ, N, L)
+	if err != nil {
+		log.Fatalf("❌ Query index re-derivation failed: %v", err)
+	}
 	expectedRSPointX, expectedRSPointYZ, _ := protocol.GenerateRSEvaluationPoints(expectedCmXYZ, N)
 	expectedRSPointB, err := protocol.GenerateRSEvaluationPointWithLabel(expectedCmXYZ, rsPointBLabel, N, nil)
 	if err != nil {

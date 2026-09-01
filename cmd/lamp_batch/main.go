@@ -121,11 +121,16 @@ func runExperiment(logK int, rhoStr string, L int, batch int, onlyCompile bool) 
 	}
 
 	K := 1 << logK
-	N := K << 1
-	if rhoStr == "1/4" {
+	var N int
+	switch rhoStr {
+	case "1/2":
+		N = K << 1
+	case "1/4":
 		N = K << 2
-	} else if rhoStr != "1/2" {
-		log.Fatalf("unsupported rho %q; use 1/2 or 1/4", rhoStr)
+	case "1/8":
+		N = K << 3
+	default:
+		log.Fatalf("unsupported rho %q; use 1/2, 1/4, or 1/8", rhoStr)
 	}
 	if L > N {
 		log.Fatalf("L=%d exceeds codeword length N=%d", L, N)

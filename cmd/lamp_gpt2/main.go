@@ -183,7 +183,7 @@ func main() {
 	}
 
 	seqFlag := flag.Int("seq", config.GetInt("LAMP_GPT2_SEQ", 1), "Log2 sequence length")
-	rhoFlag := flag.String("rho", config.GetString("LAMP_GPT2_RHO", "1/2"), "Code rate, 1/2 or 1/4")
+	rhoFlag := flag.String("rho", config.GetString("LAMP_GPT2_RHO", "1/2"), "Code rate, 1/2, 1/4, or 1/8")
 	LFlag := flag.Int("L", config.GetInt("LAMP_GPT2_L", 1), "Number of sampled queries per matmul and wiring check")
 	allFlag := flag.Bool("all", config.GetBool("LAMP_GPT2_ALL", false), "Run benchmark range")
 	rangeFlag := flag.Bool("range", false, "Alias for -all")
@@ -1356,8 +1356,10 @@ func codewordLength(k int, rho string) int {
 		return k << 1
 	case "1/4":
 		return k << 2
+	case "1/8":
+		return k << 3
 	default:
-		log.Fatalf("unsupported rho %q; expected 1/2 or 1/4", rho)
+		log.Fatalf("unsupported rho %q; expected 1/2, 1/4, or 1/8", rho)
 		return 0
 	}
 }
