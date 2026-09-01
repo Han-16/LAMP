@@ -31,6 +31,38 @@ fi
 target="$1"
 shift
 
+# One RHO controls both LAMP variants. An explicit L (CLI or env) wins.
+rho="${RHO:-${LAMP_RHO:-1/2}}"
+explicit_l="${LAMP_L:-}"
+expect_l=false
+expect_rho=false
+for arg in "$@"; do
+	if [ "$expect_l" = true ]; then explicit_l="$arg"; expect_l=false; continue; fi
+	if [ "$expect_rho" = true ]; then rho="$arg"; expect_rho=false; continue; fi
+	case "$arg" in
+		-L|--L) expect_l=true ;;
+		-L=*|--L=*) explicit_l="${arg#*=}" ;;
+		--rho=*|-rho=*) rho="${arg#*=}" ;;
+		--rho|-rho) expect_rho=true ;;
+	esac
+done
+
+case "$rho" in
+	1/2) default_l=309 ;;
+	1/4) default_l=189 ;;
+	1/8) default_l=155 ;;
+	*) echo "unsupported RHO: $rho" >&2; exit 2 ;;
+esac
+
+if [ -z "$explicit_l" ]; then
+	explicit_l="$default_l"
+fi
+LAMP_RHO="$rho"
+LAMP_BATCH_RHO="$rho"
+LAMP_L="$explicit_l"
+LAMP_BATCH_L="$explicit_l"
+export LAMP_RHO LAMP_BATCH_RHO LAMP_L LAMP_BATCH_L
+
 range=false
 batch_range=false
 args=""
