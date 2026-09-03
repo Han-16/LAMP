@@ -1,0 +1,76 @@
+{{- define "import_fr" }}
+    {{- if ne .AutoGenerateField "" }}
+	fr "github.com/consensys/gnark/internal/smallfields/{{ toLower .Curve }}"
+	{{- else if .OnlyField }}
+	fr "github.com/consensys/gnark-crypto/field/{{toLower .Curve}}"
+	{{- else}}
+	"github.com/consensys/gnark-crypto/ecc/{{toLower .Curve}}/fr"
+	{{- end}}
+{{- end }}
+
+{{- define "import_fp" }}
+    {{- if ne .AutoGenerateField "" }}
+	fp "github.com/consensys/gnark/internal/smallfields/{{ toLower .Curve }}"
+	{{- else if .OnlyField }}
+	fp "github.com/consensys/gnark-crypto/field/{{toLower .Curve}}"
+	{{- else}}
+	"github.com/consensys/gnark-crypto/ecc/{{toLower .Curve}}/fp"
+	{{- end}}
+{{- end }}
+
+
+{{- define "import_fri" }}
+	"github.com/consensys/gnark-crypto/ecc/{{toLower .Curve}}/fr/fri"
+{{- end}}
+
+{{- define "import_curve" }}
+	{{- if ne .AutoGenerateField "" }}
+	"github.com/consensys/gnark-crypto/ecc"
+	{{- else}}
+	curve "github.com/consensys/gnark-crypto/ecc/{{toLower .Curve}}"
+	{{- end}}
+{{- end }}
+
+{{- define "import_backend_cs" }}
+	cs "github.com/consensys/gnark/constraint/{{toLower .Curve }}"
+{{- end }}
+
+{{- define "import_fft" }}
+	"github.com/consensys/gnark-crypto/ecc/{{toLower .Curve}}/fr/fft"
+{{- end }}
+
+{{- define "import_witness" }}
+    {{- if ne .AutoGenerateField "" | or .OnlyField}}
+	{{toLower .CurveID}}witness "github.com/consensys/gnark/internal/smallfields/{{ .Curve }}/witness"
+	{{- else}}
+	{{toLower .CurveID}}witness "github.com/consensys/gnark/internal/backend/{{toLower .Curve}}/witness"
+	{{- end}}
+{{- end }}
+
+{{- define "import_groth16" }}
+	{{toLower .CurveID}}groth16 "github.com/consensys/gnark/backend/groth16/{{toLower .Curve}}"
+{{- end }}
+
+{{- define "import_plonk" }}
+	{{toLower .CurveID}}plonk "github.com/consensys/gnark/backend/plonk/{{toLower .Curve}}"
+{{- end }}
+
+{{- define "import_polynomial" }}
+	"github.com/consensys/gnark-crypto/ecc/{{ toLower .Curve }}/fr/polynomial"
+{{- end }}
+
+{{- define "import_kzg" }}
+	"github.com/consensys/gnark-crypto/ecc/{{ toLower .Curve }}/kzg"
+{{- end }}
+
+{{- define "import_pedersen"}}
+	"github.com/consensys/gnark-crypto/ecc/{{ toLower .Curve }}/fr/pedersen"
+{{- end}}
+
+{{- define "import_gkr"}}
+	gkr "github.com/consensys/gnark/internal/gkr/{{ toLower .Curve }}"
+{{- end}}
+
+{{- define "import_hash_to_field" }}
+	"github.com/consensys/gnark-crypto/ecc/{{ toLower .Curve}}/fr/hash_to_field"
+{{- end}}
