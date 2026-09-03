@@ -58,7 +58,7 @@ func main() {
 
 	logKFlag := flag.Int("K", config.GetInt("LAMP_BATCH_LOG_K", 10), "Log base 2 of K")
 	rhoFlag := flag.String("rho", config.GetString("LAMP_BATCH_RHO", "1/2"), "Code rate")
-	LFlag := flag.Int("L", config.GetInt("LAMP_BATCH_L", 128), "Number of unique indices L")
+	LFlag := flag.Int("L", config.GetInt("LAMP_BATCH_L", 128), "Number of sampled indices L")
 	batchFlag := flag.Int("batch", config.GetInt("LAMP_BATCH_SIZE", 5), "Number of matrix multiplications in the batch")
 	allFlag := flag.Bool("all", config.GetBool("LAMP_BATCH_ALL", false), "Run benchmark range")
 	batchRangeFlag := flag.Bool("batch-range", config.GetBool("LAMP_BATCH_RANGE", false), "Run benchmark range over batch sizes")
@@ -131,9 +131,6 @@ func runExperiment(logK int, rhoStr string, L int, batch int, onlyCompile bool) 
 		N = K << 3
 	default:
 		log.Fatalf("unsupported rho %q; use 1/2, 1/4, or 1/8", rhoStr)
-	}
-	if L > N {
-		log.Fatalf("L=%d exceeds codeword length N=%d", L, N)
 	}
 	depth := int(math.Log2(float64(N)))
 	field := ecc.BN254.ScalarField()
@@ -245,7 +242,7 @@ func runExperiment(logK int, rhoStr string, L int, batch int, onlyCompile bool) 
 	treeXYZ, rootXYZ := crypto.BuildMerkleTreeFromGroupElements(leavesXYZ, depth)
 
 	cmXYZ := crypto.HashElementsMiMC(rootXYZ)
-	indices, err := protocol.GenerateUniqueIndicesWithLabel(cmXYZ, labelQueries, N, L)
+	indices, err := protocol.GenerateIndicesWithLabel(cmXYZ, labelQueries, N, L)
 	if err != nil {
 		log.Fatalf("❌ Failed to sample query indices: %v", err)
 	}
@@ -670,7 +667,7 @@ func verifyTranscript(
 	expectedChallengeB := deriveLAMPBATCHChallenge(expectedCmABC, labelChallengeB)
 	expectedGamma := deriveLAMPBATCHChallenge(expectedCmABC, labelGamma)
 	expectedCmXYZ := crypto.HashElementsMiMC(rootXYZ)
-	expectedIndices, err := protocol.GenerateUniqueIndicesWithLabel(expectedCmXYZ, labelQueries, N, L)
+	expectedIndices, err := protocol.GenerateIndicesWithLabel(expectedCmXYZ, labelQueries, N, L)
 	if err != nil {
 		log.Fatalf("❌ Query index derivation failed: %v", err)
 	}

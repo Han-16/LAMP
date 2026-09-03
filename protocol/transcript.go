@@ -22,31 +22,25 @@ func GenerateRSEvaluationPoints(seed fr.Element, n int) (fr.Element, fr.Element,
 	return x, yz, nil
 }
 
-func GenerateUniqueIndicesWithLabel(seed fr.Element, label uint64, n int, count int) ([]int, error) {
+func GenerateIndicesWithLabel(seed fr.Element, label uint64, n int, count int) ([]int, error) {
 	if n <= 0 {
 		return nil, fmt.Errorf("domain size must be positive")
 	}
-	if count > n {
-		return nil, fmt.Errorf("cannot extract %d unique indices from a pool of %d", count, n)
+	if count < 0 {
+		return nil, fmt.Errorf("query count must be non-negative")
 	}
 
 	var labelElement fr.Element
 	labelElement.SetUint64(label)
 
-	indices := make([]int, 0, count)
-	selected := make(map[int]bool)
+	indices := make([]int, count)
 	currentSeed := crypto.HashElements(seed, labelElement)
 
-	for len(indices) < count {
+	for i := range indices {
 		currentSeed = crypto.HashElements(currentSeed, labelElement)
 		var seedInt big.Int
 		currentSeed.BigInt(&seedInt)
-
-		idx := int(seedInt.Uint64() % uint64(n))
-		if !selected[idx] {
-			selected[idx] = true
-			indices = append(indices, idx)
-		}
+		indices[i] = int(seedInt.Uint64() % uint64(n))
 	}
 	return indices, nil
 }

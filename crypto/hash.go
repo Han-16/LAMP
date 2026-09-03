@@ -46,26 +46,22 @@ func HashPoint(p bn254.G1Affine) fr.Element {
 	return HashElements(xFr, yFr)
 }
 
-func GenerateUniqueIndices(seed fr.Element, N int, L int) ([]int, error) {
-	if L > N {
-		return nil, fmt.Errorf("cannot extract %d unique indices from a pool of %d", L, N)
+func GenerateIndices(seed fr.Element, N int, L int) ([]int, error) {
+	if N <= 0 {
+		return nil, fmt.Errorf("domain size must be positive")
+	}
+	if L < 0 {
+		return nil, fmt.Errorf("query count must be non-negative")
 	}
 
-	indices := make([]int, 0, L)
-	selected := make(map[int]bool)
+	indices := make([]int, L)
 	currentSeed := seed
 
-	for len(indices) < L {
+	for i := range indices {
 		currentSeed = HashElements(currentSeed)
 		var seedInt big.Int
 		currentSeed.BigInt(&seedInt)
-
-		idx := int(seedInt.Uint64() % uint64(N))
-
-		if !selected[idx] {
-			selected[idx] = true
-			indices = append(indices, idx)
-		}
+		indices[i] = int(seedInt.Uint64() % uint64(N))
 	}
 	return indices, nil
 }

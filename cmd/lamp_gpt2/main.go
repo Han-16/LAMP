@@ -750,16 +750,12 @@ func (p *preparedLayer) sampleClaim(claim *claimWitness) {
 	L := p.L
 	NIn := codewordLength(claim.spec.A.cols, p.rho)
 	NOut := codewordLength(claim.spec.C.cols, p.rho)
-	if L > NIn || L > NOut {
-		log.Fatalf("L=%d exceeds sampled domains for %s: NIn=%d NOut=%d", L, claim.spec.name, NIn, NOut)
-	}
-
 	var err error
-	claim.indicesIn, err = protocol.GenerateUniqueIndicesWithLabel(p.globalCm, labelFor(claim.spec.id, 1), NIn, L)
+	claim.indicesIn, err = protocol.GenerateIndicesWithLabel(p.globalCm, labelFor(claim.spec.id, 1), NIn, L)
 	if err != nil {
 		log.Fatalf("failed to sample input indices for %s: %v", claim.spec.name, err)
 	}
-	claim.indicesOut, err = protocol.GenerateUniqueIndicesWithLabel(p.globalCm, labelFor(claim.spec.id, 2), NOut, L)
+	claim.indicesOut, err = protocol.GenerateIndicesWithLabel(p.globalCm, labelFor(claim.spec.id, 2), NOut, L)
 	if err != nil {
 		log.Fatalf("failed to sample output indices for %s: %v", claim.spec.name, err)
 	}
@@ -1003,7 +999,7 @@ func (p *preparedLayer) addQKVSplitChecks(tensors []*tensor, L int) {
 		offsets := []int{h * gpt2Dh, gpt2D + h*gpt2Dh, 2*gpt2D + h*gpt2Dh}
 
 		for part := 0; part < len(targets); part++ {
-			pairs, err := protocol.GenerateUniqueIndicesWithLabel(p.globalCm, uint64(8000+part*1000+h), p.seqLen*gpt2Dh, L)
+			pairs, err := protocol.GenerateIndicesWithLabel(p.globalCm, uint64(8000+part*1000+h), p.seqLen*gpt2Dh, L)
 			if err != nil {
 				log.Fatalf("failed to sample QKV split entry pairs for head %d part %d: %v", h, part, err)
 			}
@@ -1035,7 +1031,7 @@ func (p *preparedLayer) addTransposeChecks(tensors []*tensor, L int) {
 	for h := 0; h < gpt2Heads; h++ {
 		K := byName[fmt.Sprintf("K_%02d", h)]
 		KT := byName[fmt.Sprintf("KT_%02d", h)]
-		pairs, err := protocol.GenerateUniqueIndicesWithLabel(p.globalCm, uint64(5000+h*10), p.seqLen*gpt2Dh, L)
+		pairs, err := protocol.GenerateIndicesWithLabel(p.globalCm, uint64(5000+h*10), p.seqLen*gpt2Dh, L)
 		if err != nil {
 			log.Fatalf("failed to sample transpose entry pairs for head %d: %v", h, err)
 		}
@@ -1067,7 +1063,7 @@ func (p *preparedLayer) addContextConcatChecks(tensors []*tensor, L int) {
 
 	for h := 0; h < gpt2Heads; h++ {
 		Ctx := byName[fmt.Sprintf("Ctx_%02d", h)]
-		pairs, err := protocol.GenerateUniqueIndicesWithLabel(p.globalCm, uint64(12000+h), p.seqLen*gpt2Dh, L)
+		pairs, err := protocol.GenerateIndicesWithLabel(p.globalCm, uint64(12000+h), p.seqLen*gpt2Dh, L)
 		if err != nil {
 			log.Fatalf("failed to sample context concat entry pairs for head %d: %v", h, err)
 		}
