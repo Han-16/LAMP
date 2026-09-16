@@ -181,7 +181,7 @@ func main() {
 
 	seqFlag := flag.Int("seq", config.GetInt("LAMP_GPT2_SEQ", 1), "Log2 sequence length")
 	rhoFlag := flag.String("rho", config.GetString("LAMP_GPT2_RHO", "1/2"), "Code rate, 1/2, 1/4, or 1/8")
-	LFlag := flag.Int("L", config.GetInt("LAMP_GPT2_L", 1), "Number of sampled queries per matmul and wiring check")
+	LFlag := flag.Int("L", config.GetInt("LAMP_GPT2_L", 309), "Number of sampled queries per matmul and wiring check")
 	allFlag := flag.Bool("all", config.GetBool("LAMP_GPT2_ALL", false), "Run benchmark range")
 	rangeFlag := flag.Bool("range", false, "Alias for -all")
 	fromFlag := flag.Int("from", config.GetInt("LAMP_GPT2_SEQ_FROM", 0), "First log2 sequence length when range mode is enabled")

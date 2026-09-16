@@ -43,7 +43,7 @@ func main() {
 
 	logKFlag := flag.Int("K", config.GetInt("LAMP_LOG_K", 10), "Log base 2 of K")
 	rhoFlag := flag.String("rho", config.GetString("LAMP_RHO", "1/2"), "Code rate")
-	LFlag := flag.Int("L", config.GetInt("LAMP_L", 128), "Number of sampled indices L")
+	LFlag := flag.Int("L", config.GetInt("LAMP_L", 309), "Number of sampled indices L")
 	allFlag := flag.Bool("all", config.GetBool("LAMP_ALL", false), "Run benchmark range")
 	fromFlag := flag.Int("from", config.GetInt("LAMP_LOG_K_FROM", 7), "First logK when -all is enabled")
 	toFlag := flag.Int("to", config.GetInt("LAMP_LOG_K_TO", 20), "Last logK when -all is enabled")

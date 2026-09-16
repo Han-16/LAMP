@@ -45,17 +45,17 @@ cp .env.example .env
 The default values in `.env.example` can be changed, but command-line flags
 override them for ad-hoc runs. LAMP runs use the QA-batch CP-link backend and
 Merkle multiproofs; these are fixed and are not configured through `.env` or
-command-line flags.
+command-line flags. The default number of sampled queries is `L=309`.
 
 To run a one-off experiment with different parameters, pass flags after the
 target name:
 
 ```sh
-sh scripts/run_bench.sh lamp --K 10 --rho 1/2 --L 128
-sh scripts/run_bench.sh lamp_batch --K 10 --rho 1/2 --L 128 --batch 5
+sh scripts/run_bench.sh lamp --K 10 --rho 1/2 --L 309
+sh scripts/run_bench.sh lamp_batch --K 10 --rho 1/2 --L 309 --batch 5
 sh scripts/run_bench.sh lamp --range --from 7 --to 13
 sh scripts/run_bench.sh lamp_batch --batch-range --batch-from 1 --batch-to 10
-sh scripts/run_gpt2_bench.sh lamp --seq 7 --rho 1/2 --L 128
+sh scripts/run_gpt2_bench.sh lamp --seq 7 --rho 1/2 --L 309
 sh scripts/run_gpt2_bench.sh lamp --range --from 7 --to 10
 ```
 
@@ -67,24 +67,6 @@ or memory limit is applied, so each benchmark process can use all resources
 available to Docker, and each CSV `PeakMemory(B)` value is an independent peak
 RSS measurement.
 
-## Smoke Tests
-
-Use `--compile` for quick checks. This compiles the circuit and records the
-constraint count without running Groth16 proving.
-
-```sh
-sh scripts/run_bench.sh lamp --compile
-sh scripts/run_bench.sh freivalds --compile
-```
-
-GPT-2 smoke tests:
-
-```sh
-sh scripts/run_gpt2_bench.sh lamp --compile
-sh scripts/run_gpt2_bench.sh freivalds --compile
-```
-
-For GPT-2, `LAMP_GPT2_SEQ=s` in `.env` means sequence length `2^s`.
 
 ## Running Benchmarks
 
@@ -154,13 +136,7 @@ sh scripts/run_gpt2_bench.sh all
 ```
 
 Set the range bounds and batch-size ranges in `.env` before running these
-commands. For LAMP GPT-2 with `L=128`, use `LAMP_GPT2_SEQ_FROM=6` or higher. Smaller sequence
-lengths do not have large enough score/value codeword domains for 128 sampled
-queries.
-
-Set `*_ONLY_COMPILE=true` in `.env` or pass `--compile` for constraint-only
-checks. Full proof runs can be
-substantially slower, especially for GPT-2 benchmarks.
+commands.
 
 ## Output
 
@@ -181,15 +157,3 @@ verification times.
 Each CSV output directory also contains `system_info.json`, which records the
 CPU model, logical core count, RAM, OS, architecture, Go version, and timestamp
 for the benchmark run.
-
-## Local Go Commands
-
-If Go `1.25.6` is available locally, the Docker scripts are not required:
-
-```sh
-go test ./...
-go run ./cmd/lamp --compile
-go run ./cmd/lamp_batch --compile
-go run ./cmd/freivalds_batch --compile
-go run ./cmd/lamp_gpt2 --compile
-```

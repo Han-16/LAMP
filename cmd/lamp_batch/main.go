@@ -55,7 +55,7 @@ func main() {
 
 	logKFlag := flag.Int("K", config.GetInt("LAMP_BATCH_LOG_K", 10), "Log base 2 of K")
 	rhoFlag := flag.String("rho", config.GetString("LAMP_BATCH_RHO", "1/2"), "Code rate")
-	LFlag := flag.Int("L", config.GetInt("LAMP_BATCH_L", 128), "Number of sampled indices L")
+	LFlag := flag.Int("L", config.GetInt("LAMP_BATCH_L", 309), "Number of sampled indices L")
 	batchFlag := flag.Int("batch", config.GetInt("LAMP_BATCH_SIZE", 5), "Number of matrix multiplications in the batch")
 	allFlag := flag.Bool("all", config.GetBool("LAMP_BATCH_ALL", false), "Run benchmark range")
 	batchRangeFlag := flag.Bool("batch-range", config.GetBool("LAMP_BATCH_RANGE", false), "Run benchmark range over batch sizes")
