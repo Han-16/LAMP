@@ -1,5 +1,5 @@
 # LAMP Quick Start
-[![DOI](https://zenodo.org/badge/1164647727.svg)](https://doi.org/10.5281/zenodo.22787398)
+[![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.22787398-blue.svg)](https://doi.org/10.5281/zenodo.22787398)
 
 This repository contains Go implementations for `LAMP: Linear Verification of
 Matrix Multiplication via Proximity Testing`, along with Freivalds baselines over
