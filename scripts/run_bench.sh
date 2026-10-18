@@ -16,6 +16,7 @@ usage() {
 	echo "usage: scripts/run_bench.sh [lamp|lamp_batch|freivalds|freivalds_batch|all] [--range] [flags...]" >&2
 	echo "" >&2
 	echo "examples:" >&2
+	echo "  sh scripts/run_bench.sh lamp --repeat 3" >&2
 	echo "  scripts/run_bench.sh lamp" >&2
 	echo "  scripts/run_bench.sh lamp_batch" >&2
 	echo "  scripts/run_bench.sh freivalds" >&2
@@ -67,14 +68,35 @@ range=false
 batch_range=false
 args=""
 matrix_dir="${LAMP_MATRIX_DIR:-matrices}"
+repeat_override=""
+expect_repeat=false
 expect_matrix_dir=false
 for arg in "$@"; do
+	if [ "$expect_repeat" = true ]; then
+		repeat_override="$arg"
+		expect_repeat=false
+		if [ -z "$repeat_override" ]; then
+			echo "repeat requires a positive integer" >&2
+			exit 2
+		fi
+		continue
+	fi
 	if [ "$expect_matrix_dir" = true ]; then
 		matrix_dir="$arg"
 		expect_matrix_dir=false
 		continue
 	fi
 	case "$arg" in
+		--repeat|-repeat)
+			expect_repeat=true
+			;;
+		--repeat=*|-repeat=*)
+			repeat_override="${arg#*=}"
+			if [ -z "$repeat_override" ]; then
+				echo "repeat requires a positive integer" >&2
+				exit 2
+			fi
+			;;
 		--matrix-dir|-matrix-dir)
 			expect_matrix_dir=true
 			;;
@@ -96,6 +118,20 @@ for arg in "$@"; do
 			;;
 	esac
 done
+if [ "$expect_repeat" = true ]; then
+	echo "repeat requires a positive integer" >&2
+	exit 2
+fi
+if [ -n "$repeat_override" ]; then
+	case "$repeat_override" in
+		*[!0-9]*) echo "repeat requires a positive integer" >&2; exit 2 ;;
+	esac
+	if ! [ "$repeat_override" -ge 1 ] 2>/dev/null; then
+		echo "repeat must be a positive integer" >&2
+		exit 2
+	fi
+fi
+
 if [ "$expect_matrix_dir" = true ] || [ -z "$matrix_dir" ]; then
 	echo "matrix-dir requires a directory" >&2
 	exit 2
@@ -142,8 +178,8 @@ docker build -t "$image" .
 env_args="--env-file .env"
 
 for key in \
-	LAMP_LOG_K LAMP_RHO LAMP_L LAMP_ALL LAMP_ONLY_COMPILE LAMP_OUTPUT_DIR LAMP_LOG_K_FROM LAMP_LOG_K_TO \
-	LAMP_BATCH_LOG_K LAMP_BATCH_RHO LAMP_BATCH_L LAMP_BATCH_SIZE LAMP_BATCH_ALL LAMP_BATCH_RANGE LAMP_BATCH_ONLY_COMPILE LAMP_BATCH_OUTPUT_DIR LAMP_BATCH_LOG_K_FROM LAMP_BATCH_LOG_K_TO LAMP_BATCH_FROM LAMP_BATCH_TO \
+	LAMP_REPEAT LAMP_LOG_K LAMP_RHO LAMP_L LAMP_ALL LAMP_ONLY_COMPILE LAMP_OUTPUT_DIR LAMP_LOG_K_FROM LAMP_LOG_K_TO \
+	LAMP_BATCH_REPEAT LAMP_BATCH_LOG_K LAMP_BATCH_RHO LAMP_BATCH_L LAMP_BATCH_SIZE LAMP_BATCH_ALL LAMP_BATCH_RANGE LAMP_BATCH_ONLY_COMPILE LAMP_BATCH_OUTPUT_DIR LAMP_BATCH_LOG_K_FROM LAMP_BATCH_LOG_K_TO LAMP_BATCH_FROM LAMP_BATCH_TO \
 	FREIVALDS_LOG_K FREIVALDS_ALL FREIVALDS_ONLY_COMPILE FREIVALDS_OUTPUT_DIR FREIVALDS_LOG_K_FROM FREIVALDS_LOG_K_TO \
 	FREIVALDS_BATCH_LOG_K FREIVALDS_BATCH_SIZE FREIVALDS_BATCH_ALL FREIVALDS_BATCH_RANGE FREIVALDS_BATCH_ONLY_COMPILE FREIVALDS_BATCH_OUTPUT_DIR FREIVALDS_BATCH_LOG_K_FROM FREIVALDS_BATCH_LOG_K_TO FREIVALDS_BATCH_FROM FREIVALDS_BATCH_TO
 do
@@ -174,6 +210,11 @@ run_process() {
 	protocol="$1"
 	append_results="$2"
 	shift 2
+	case "$protocol" in
+		lamp|lamp_batch|lamp_gpt2)
+			if [ -n "$repeat_override" ]; then set -- "$@" --repeat "$repeat_override"; fi
+			;;
+	esac
 	# No CPU or memory limit is applied: the one benchmark process may use all
 	# resources available to Docker. Calls stay sequential because no job is
 	# backgrounded.

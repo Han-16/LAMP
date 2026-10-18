@@ -193,6 +193,46 @@ sh scripts/run_gpt2_bench.sh all
 Set the range bounds and batch-size ranges in `.env` before running these
 commands.
 
+LAMP, LAMP batch, and LAMP GPT-2 accept `-repeat` (default 1, minimum 1).
+The environment defaults are `LAMP_REPEAT`, `LAMP_BATCH_REPEAT`, and
+`LAMP_GPT2_REPEAT`. For example:
+
+```sh
+# Three complete measurements per k; two k values produce six individual rows.
+go run ./cmd/lamp -all -from 7 -to 8 -repeat 3 -matrix-source file
+
+# Three per (k, batch) configuration, or per GPT-2 sequence length.
+go run ./cmd/lamp_batch -K 7 -batch 5 -repeat 3
+go run ./cmd/lamp_gpt2 -seq 0 -repeat 3
+
+# Docker wrappers forward --repeat to the LAMP targets.
+sh scripts/run_bench.sh lamp --range --repeat 3
+sh scripts/run_gpt2_bench.sh lamp --repeat 3
+```
+
+Each configuration prepares its input matrices/tensors once and shares them
+read-only across repetitions. Every repetition creates fresh compilation,
+setup keys, commitments and proofs, and verifies the proof before saving its
+individual rows. Compilation remains outside all setup timers. Garbage
+collection runs between repetitions, outside timers. In compile-only mode,
+only circuit compilation and constraint reporting are repeated.
+
+After every requested configuration in a command succeeds, `<stem>_average.csv`
+records one row per configuration, with `runs` as its actual measurement count.
+Times, proof sizes and per-repetition memory peaks use arithmetic means of the
+original numeric measurements, before display rounding. Proof-size means use
+two decimal places in bytes. A phase's mean RSS is empty if any repetition
+could not measure it; unmeasured phases and LAMP's unavailable verifier MSM
+metrics also stay empty. Shared input computation/loading times are retained
+as metadata rather than recomputed or averaged.
+
+Averages use only this command's measurements. Append mode adds a new summary
+under a new `run_id`, without mixing previous invocations. An interrupted or
+failed command preserves completed individual rows and produces no summary for
+that invocation. Docker range wrappers invoke one command per configuration,
+so each successful configuration appends its own summary. The repeat option
+applies to the three LAMP targets; Freivalds targets retain their existing flow.
+
 ## Output
 
 Benchmark CSV files are written under:
@@ -207,14 +247,16 @@ benchmark/freivalds_gpt2/
 ```
 
 The LAMP outputs (`lamp`, `lamp_batch`, and `lamp_gpt2`) use LED's exact
-33-column performance header and order. Each performance file also has
-`<stem>_info.csv` and `<stem>_memory.csv` companions. Corresponding data rows
-in all three files describe the same experiment; keep them together and use
-one writer per set.
+36-column performance header and order, including `run_id`, `repeat`, and
+`commit_mode` in every individual file. Each performance file also has
+`<stem>_info.csv`, `<stem>_memory.csv`, and `<stem>_average.csv` companions. Corresponding data rows
+in the three individual files describe the same experiment; keep them together
+and use one writer per set. `run_id` identifies a command invocation; `repeat`
+is the one-based repetition number.
 
-The info CSV starts with LED's nine columns: `logk`, `rho`, `samples`,
-`commit_mode`, `matrix_source`, `matrix_path`, `matrix_workers`,
-`matrix_compute_time`, `matrix_load_time`. LAMP-specific `linker`, `merkle`,
+The info CSV starts with LED's eleven columns: `run_id`, `repeat`,
+`commit_mode`, `logk`, `rho`, `samples`, `matrix_source`, `matrix_path`,
+`matrix_workers`, `matrix_compute_time`, `matrix_load_time`. LAMP-specific `linker`, `merkle`,
 and `n` follow; batch adds `batch`, and GPT-2 adds `seq_log`, `seq_len`,
 `num_claims`, and `num_commit_groups`. GPT-2 has no single square K/N, so
 `logk` and `n` are empty. LAMP's encoded-column MSM commitments are recorded
@@ -245,7 +287,9 @@ The commit/prove timing definitions are:
 `pedersen_commit_time` and `merkle_commit_time` split ABC/tensor commitments.
 `commit_other_time` records residual bookkeeping outside these named timers
 and is excluded from the commit totals. Do not add diagnostic subtotals again.
-Circuit setup now includes compilation and Groth16 setup, as in LED.
+`circuit_setup_time` measures only `groth16.Setup()`, as in LED. Circuit
+construction and compilation are not timed or included in `total_setup_time`.
+The total remains protocol setup + circuit setup + CP-Link setup.
 The LED-specific `d_agg_msm_time`, `q_h_msm_time`, and `verifier_msm_time`
 columns are empty because LAMP has no corresponding separate verifier phases.
 
@@ -276,7 +320,8 @@ four components. Statement roots, setup keys, and transport framing are excluded
 LAMP retains its own proof structure: square and batch have two links and two
 sets of queried commitments; GPT-2 counts the actual sampled groups.
 
-The memory CSV has LED's eight columns: `logk`, `rho`, then
+The memory CSV has LED's eleven columns: `run_id`, `repeat`, `commit_mode`,
+`logk`, `rho`, then
 `setup_peak_heap`, `setup_peak_rss`, `commit_peak_heap`, `commit_peak_rss`,
 `prove_peak_heap`, `prove_peak_rss`. Memory is sampled at phase boundaries and
 every 10 ms. Disjoint intervals of the same phase are merged by their maxima;
@@ -285,9 +330,10 @@ process usage, not allocations attributable only to a phase. Values use MiB
 below 1 GiB and GiB otherwise, to two decimal places. RSS is supported on Linux;
 unsupported RSS and unmeasured phases are empty (including compile-only runs).
 
-Appending (`BENCHMARK_APPEND_CSV=true`) checks all three headers and data-row
-counts before writing. Old CSVs are incompatible; use a new output directory.
-A non-append run replaces all three output files. Existing measurements cannot
+Appending (`BENCHMARK_APPEND_CSV=true`) checks the three individual headers and
+data-row counts plus the average header before writing. Old CSVs are
+incompatible; use a new output directory. A non-append run replaces the three
+individual files and clears the previous average file. Existing measurements cannot
 be converted to the new timing and size conventions by renaming headers.
 
 Each CSV output directory also contains `system_info.json`, which records the

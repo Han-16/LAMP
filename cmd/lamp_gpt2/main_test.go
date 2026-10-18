@@ -148,3 +148,21 @@ func TestMerkleSizesSeparateQueryCommitments(t *testing.T) {
 		t.Fatalf("query bytes=%d; compressed payload=%d, including repeats", got, len(queryPayload))
 	}
 }
+
+func TestRepeatedLayerInputsShareDataWithoutProverState(t *testing.T) {
+	data := [][]fr.Element{{fr.One(), fr.One()}, {fr.One(), fr.One()}}
+	original := &tensor{id: 1, name: "tiny", rows: 2, cols: 2, group: groupS, data: data}
+	input := &layerInput{tensors: []*tensor{original}, specs: []claimSpec{{id: 1, A: original, B: original, C: original}}}
+	first, claims := input.freshTensors()
+	if first[0] == original || &first[0].data[0][0] != &data[0][0] || claims[0].A != first[0] || claims[0].B != first[0] || claims[0].C != first[0] {
+		t.Fatal("repetition must share input data and remap tensor references")
+	}
+	first[0].colsEnc, first[0].leafStart = data, 123
+	second, nextClaims := input.freshTensors()
+	if second[0] == first[0] || second[0].colsEnc != nil || second[0].leafStart != 0 || nextClaims[0].A != second[0] {
+		t.Fatal("previous repetition's encoded/prover state leaked")
+	}
+	if original.colsEnc != nil || original.leafStart != 0 {
+		t.Fatal("shared input was mutated")
+	}
+}

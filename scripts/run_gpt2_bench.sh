@@ -16,6 +16,7 @@ usage() {
 	echo "usage: sh scripts/run_gpt2_bench.sh [lamp|freivalds|lamp_gpt2|freivalds_gpt2|all] [--range] [flags...]" >&2
 	echo "" >&2
 	echo "examples:" >&2
+	echo "  sh scripts/run_gpt2_bench.sh lamp --repeat 3" >&2
 	echo "  sh scripts/run_gpt2_bench.sh lamp" >&2
 	echo "  sh scripts/run_gpt2_bench.sh freivalds" >&2
 	echo "  sh scripts/run_gpt2_bench.sh all" >&2
@@ -38,9 +39,30 @@ case "$target" in
 esac
 
 args=""
+repeat_override=""
+expect_repeat=false
 range=false
 for arg in "$@"; do
+	if [ "$expect_repeat" = true ]; then
+		repeat_override="$arg"
+		expect_repeat=false
+		if [ -z "$repeat_override" ]; then
+			echo "repeat requires a positive integer" >&2
+			exit 2
+		fi
+		continue
+	fi
 	case "$arg" in
+		--repeat|-repeat)
+			expect_repeat=true
+			;;
+		--repeat=*|-repeat=*)
+			repeat_override="${arg#*=}"
+			if [ -z "$repeat_override" ]; then
+				echo "repeat requires a positive integer" >&2
+				exit 2
+			fi
+			;;
 		--range|--all)
 			range=true
 			;;
@@ -53,6 +75,19 @@ for arg in "$@"; do
 			;;
 	esac
 done
+if [ "$expect_repeat" = true ]; then
+	echo "repeat requires a positive integer" >&2
+	exit 2
+fi
+if [ -n "$repeat_override" ]; then
+	case "$repeat_override" in
+		*[!0-9]*) echo "repeat requires a positive integer" >&2; exit 2 ;;
+	esac
+	if ! [ "$repeat_override" -ge 1 ] 2>/dev/null; then
+		echo "repeat must be a positive integer" >&2
+		exit 2
+	fi
+fi
 
 # Share the RHO -> L mapping with the regular LAMP benchmarks.
 rho="${RHO:-${LAMP_GPT2_RHO:-1/2}}"
@@ -110,7 +145,7 @@ docker build -t "$image" .
 
 env_args="--env-file .env"
 for key in \
-	LAMP_GPT2_SEQ LAMP_GPT2_RHO LAMP_GPT2_L LAMP_GPT2_ALL LAMP_GPT2_SEQ_FROM LAMP_GPT2_SEQ_TO LAMP_GPT2_ONLY_COMPILE LAMP_GPT2_OUTPUT_DIR \
+	LAMP_GPT2_REPEAT LAMP_GPT2_SEQ LAMP_GPT2_RHO LAMP_GPT2_L LAMP_GPT2_ALL LAMP_GPT2_SEQ_FROM LAMP_GPT2_SEQ_TO LAMP_GPT2_ONLY_COMPILE LAMP_GPT2_OUTPUT_DIR \
 	FREIVALDS_GPT2_SEQ FREIVALDS_GPT2_ALL FREIVALDS_GPT2_SEQ_FROM FREIVALDS_GPT2_SEQ_TO FREIVALDS_GPT2_ONLY_COMPILE FREIVALDS_GPT2_OUTPUT_DIR
 do
 	value="$(eval "printf '%s' \"\${$key:-}\"")"
@@ -123,6 +158,11 @@ run_process() {
 	protocol="$1"
 	append_results="$2"
 	shift 2
+	case "$protocol" in
+		lamp|lamp_batch|lamp_gpt2)
+			if [ -n "$repeat_override" ]; then set -- "$@" --repeat "$repeat_override"; fi
+			;;
+	esac
 	# Calls are intentionally sequential and unconstrained so this one
 	# benchmark process can use all resources available to Docker.
 	# shellcheck disable=SC2086

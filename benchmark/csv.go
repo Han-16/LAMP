@@ -97,6 +97,7 @@ type FreivaldsBatchResult struct {
 }
 
 type LAMPResult struct {
+	Repeat               int
 	PedersenCommitTime   float64
 	MerkleCommitTime     float64
 	CommitOtherTime      float64
@@ -143,6 +144,7 @@ type LAMPResult struct {
 }
 
 type LAMPBATCHResult struct {
+	Repeat               int
 	PedersenCommitTime   float64
 	MerkleCommitTime     float64
 	CommitOtherTime      float64
@@ -190,6 +192,7 @@ type LAMPBATCHResult struct {
 }
 
 type LAMPGPT2Result struct {
+	Repeat                   int
 	MatrixSource, MatrixPath string
 	MatrixLoadTime           float64
 	PedersenCommitTime       float64

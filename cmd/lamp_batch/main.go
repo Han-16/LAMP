@@ -7,6 +7,7 @@ import (
 	"log"
 	"math"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"time"
 
@@ -67,7 +68,11 @@ func main() {
 	onlyCompileFlag := flag.Bool("OnlyCompile", config.GetBool("LAMP_BATCH_ONLY_COMPILE", false), "Alias for -compile")
 	matrixSourceFlag := flag.String("matrix-source", config.GetString("LAMP_MATRIX_SOURCE", "auto"), "Matrix input: auto, file, or generate")
 	matrixDirFlag := flag.String("matrix-dir", config.OutputDir("LAMP_MATRIX_DIR", "matrices"), "Directory containing matrices_k<K>.bin")
+	repeatFlag := flag.Int("repeat", config.GetInt("LAMP_BATCH_REPEAT", 1), "repetitions per configuration, each with fresh setup keys")
 	flag.Parse()
+	if *repeatFlag < 1 {
+		log.Fatal("repeat must be at least 1")
+	}
 
 	onlyCompile := *compileFlag || *onlyCompileFlag
 	outputDir := config.OutputDir("LAMP_BATCH_OUTPUT_DIR", filepath.Join("benchmark", "lamp_batch"))
@@ -101,30 +106,57 @@ func main() {
 		runBatchFrom, runBatchTo = *batchFromFlag, *batchToFlag
 	}
 
-	if *allFlag || *batchRangeFlag {
-		if onlyCompile {
-			fmt.Printf("🚀 [OnlyCompile MODE] Checking LAMPBATCH constraints for logK=%d..%d, batch=%d..%d...\n", runLogKFrom, runLogKTo, runBatchFrom, runBatchTo)
-		} else {
-			fmt.Printf("🚀 [RANGE MODE] Running LAMPBATCH benchmarks for logK=%d..%d, batch=%d..%d...\n", runLogKFrom, runLogKTo, runBatchFrom, runBatchTo)
-		}
-		for logK := runLogKFrom; logK <= runLogKTo; logK++ {
-			for batch := runBatchFrom; batch <= runBatchTo; batch++ {
-				res := runExperiment(logK, *rhoFlag, *LFlag, batch, onlyCompile, *matrixSourceFlag, *matrixDirFlag)
-				if err := benchmark.AppendLAMPBATCHResultToCSV(writer, res); err != nil {
-					log.Fatal(err)
-				}
+	for logK := runLogKFrom; logK <= runLogKTo; logK++ {
+		for batch := runBatchFrom; batch <= runBatchTo; batch++ {
+			if err := runRepeatedExperiments(logK, *rhoFlag, *LFlag, batch, onlyCompile, *matrixSourceFlag, *matrixDirFlag, *repeatFlag, writer); err != nil {
+				log.Fatal(err)
 			}
 		}
-	} else {
-		res := runExperiment(*logKFlag, *rhoFlag, *LFlag, *batchFlag, onlyCompile, *matrixSourceFlag, *matrixDirFlag)
-		if err := benchmark.AppendLAMPBATCHResultToCSV(writer, res); err != nil {
-			log.Fatal(err)
-		}
 	}
+	if err := writer.SaveAverages(); err != nil {
+		log.Fatal(err)
+	}
+
 	fmt.Println("🎉 All LAMPBATCH tasks finished!")
 }
 
 func runExperiment(logK int, rhoStr string, L int, batch int, onlyCompile bool, matrixSource, matrixDir string) benchmark.LAMPBATCHResult {
+	var input matrix.Input
+	if !onlyCompile {
+		var err error
+		input, err = matrix.Prepare(1<<logK, matrixSource, matrixDir)
+		if err != nil {
+			log.Fatalf("matrix input: %v", err)
+		}
+	}
+	return runExperimentWithInput(logK, rhoStr, L, batch, onlyCompile, input)
+}
+
+func runRepeatedExperiments(logK int, rho string, L int, batch int, onlyCompile bool, matrixSource, matrixDir string, repeats int, writer *benchmark.LAMPCSV) error {
+	if repeats < 1 {
+		return fmt.Errorf("repeat must be at least 1")
+	}
+	var input matrix.Input
+	if !onlyCompile {
+		var err error
+		input, err = matrix.Prepare(1<<logK, matrixSource, matrixDir)
+		if err != nil {
+			return fmt.Errorf("matrix input: %w", err)
+		}
+	}
+	for repetition := 1; repetition <= repeats; repetition++ {
+		runtime.GC() // Release the previous setup/prover state outside all timers.
+		fmt.Printf("Repeat %d/%d | logk=%d | batch=%d\n", repetition, repeats, logK, batch)
+		result := runExperimentWithInput(logK, rho, L, batch, onlyCompile, input)
+		result.Repeat = repetition
+		if err := benchmark.AppendLAMPBATCHResultToCSV(writer, result); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func runExperimentWithInput(logK int, rhoStr string, L int, batch int, onlyCompile bool, input matrix.Input) benchmark.LAMPBATCHResult {
 	merkle := merkleMulti
 	if batch <= 0 {
 		log.Fatalf("batch must be positive, got %d", batch)
@@ -175,7 +207,6 @@ func runExperiment(logK int, rhoStr string, L int, batch int, onlyCompile bool, 
 	}
 
 	var protocolSetupTime float64
-	var circuitSetupTime float64
 	var cpLinkSetupTime float64
 
 	setupSampler := benchmark.StartMemory()
@@ -186,10 +217,6 @@ func runExperiment(logK int, rhoStr string, L int, batch int, onlyCompile bool, 
 	protocolSetupTime += time.Since(startProtocolSetup).Seconds()
 	setupMemory := setupSampler.Stop()
 
-	input, err := matrix.Prepare(K, matrixSource, matrixDir)
-	if err != nil {
-		log.Fatalf("matrix input: %v", err)
-	}
 	matrixComputeTime := input.Compute.Seconds()
 	fmt.Printf("   Matrix input: %s (%s); load: %s; compute: %s\n", input.Source, input.Path,
 		benchmark.FormatDurationSeconds(input.Load.Seconds()), benchmark.FormatDurationSeconds(matrixComputeTime))
@@ -277,20 +304,19 @@ func runExperiment(logK int, rhoStr string, L int, batch int, onlyCompile bool, 
 	protocolSetupTime += time.Since(startDomainSetup).Seconds()
 
 	emptyCircuit := newLAMPBATCHCircuit(K, N, batch, L, rootsK, weightsK, rootsN, weightsN)
-	startCompile := time.Now()
 	r1csSystem, err := frontend.Compile(field, r1cs.NewBuilder, emptyCircuit)
 	if err != nil {
 		log.Fatalf("❌ Compilation failed: %v", err)
 	}
-	circuitSetupTime += time.Since(startCompile).Seconds()
 	nbConstraints := r1csSystem.GetNbConstraints()
 
+	// Match LED: circuit setup measures only Groth16 setup, excluding compilation.
 	startSetup := time.Now()
 	pk, vk, err := groth16.Setup(r1csSystem)
 	if err != nil {
 		log.Fatalf("❌ Groth16 setup failed: %v", err)
 	}
-	circuitSetupTime += time.Since(startSetup).Seconds()
+	circuitSetupTime := time.Since(startSetup).Seconds()
 	setupMemory = setupMemory.Merge(setupSampler.Stop())
 
 	assignment := newLAMPBATCHCircuit(K, N, batch, L, rootsK, weightsK, rootsN, weightsN)

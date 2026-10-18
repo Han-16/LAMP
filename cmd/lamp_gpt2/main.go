@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -197,7 +198,11 @@ func main() {
 	fromFlag := flag.Int("from", config.GetInt("LAMP_GPT2_SEQ_FROM", 0), "First log2 sequence length when range mode is enabled")
 	toFlag := flag.Int("to", config.GetInt("LAMP_GPT2_SEQ_TO", 4), "Last log2 sequence length when range mode is enabled")
 	compileFlag := flag.Bool("compile", config.GetBool("LAMP_GPT2_ONLY_COMPILE", false), "Only compile the circuit to get constraints")
+	repeatFlag := flag.Int("repeat", config.GetInt("LAMP_GPT2_REPEAT", 1), "repetitions per configuration, each with fresh setup keys")
 	flag.Parse()
+	if *repeatFlag < 1 {
+		log.Fatal("repeat must be at least 1")
+	}
 
 	outputDir := config.OutputDir("LAMP_GPT2_OUTPUT_DIR", filepath.Join("benchmark", "lamp_gpt2"))
 	if err := benchmark.EnsureDir(outputDir); err != nil {
@@ -214,28 +219,44 @@ func main() {
 		}
 	}()
 
+	first, last := *seqFlag, *seqFlag
 	if *allFlag || *rangeFlag {
 		if *fromFlag > *toFlag {
 			log.Fatalf("invalid seq range: from=%d, to=%d", *fromFlag, *toFlag)
 		}
-		fmt.Printf("Running LAMP GPT-2 range: seq=%d..%d, rho=%s, L=%d, linker=%s, merkle=%s\n", *fromFlag, *toFlag, *rhoFlag, *LFlag, linkerQALink, merkleMulti)
-		for seqLog := *fromFlag; seqLog <= *toFlag; seqLog++ {
-			res := runExperiment(seqLog, *rhoFlag, *LFlag, *compileFlag)
-			if err := benchmark.AppendLAMPGPT2ResultToCSV(writer, res); err != nil {
-				log.Fatal(err)
-			}
-			fmt.Println("----------------------------------------------------------------")
-		}
-		return
+		first, last = *fromFlag, *toFlag
 	}
-
-	res := runExperiment(*seqFlag, *rhoFlag, *LFlag, *compileFlag)
-	if err := benchmark.AppendLAMPGPT2ResultToCSV(writer, res); err != nil {
+	for seqLog := first; seqLog <= last; seqLog++ {
+		if err := runRepeatedExperiments(seqLog, *rhoFlag, *LFlag, *compileFlag, *repeatFlag, writer); err != nil {
+			log.Fatal(err)
+		}
+	}
+	if err := writer.SaveAverages(); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func runExperiment(seqLog int, rho string, L int, onlyCompile bool) benchmark.LAMPGPT2Result {
+func runRepeatedExperiments(seqLog int, rho string, L int, onlyCompile bool, repeats int, writer *benchmark.LAMPCSV) error {
+	if repeats < 1 {
+		return fmt.Errorf("repeat must be at least 1")
+	}
+	var input *layerInput
+	if !onlyCompile {
+		input = prepareLayerInput(seqLog)
+	}
+	for repetition := 1; repetition <= repeats; repetition++ {
+		runtime.GC()
+		fmt.Printf("Repeat %d/%d | seq=2^%d\n", repetition, repeats, seqLog)
+		result := runExperimentWithInput(seqLog, rho, L, onlyCompile, input)
+		result.Repeat = repetition
+		if err := benchmark.AppendLAMPGPT2ResultToCSV(writer, result); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func runExperimentWithInput(seqLog int, rho string, L int, onlyCompile bool, input *layerInput) benchmark.LAMPGPT2Result {
 	linker := linkerQALink
 	merkle := merkleMulti
 	if seqLog < 0 || L <= 0 {
@@ -248,11 +269,10 @@ func runExperiment(seqLog int, rho string, L int, onlyCompile bool) benchmark.LA
 	if onlyCompile {
 		prep = prepareLayerShapeOnly(seqLog, rho, L)
 	} else {
-		prep = prepareLayer(seqLog, rho, L)
+		prep = prepareLayer(seqLog, rho, L, input)
 		fmt.Printf("   ✅ Matrix Compute Time: %.2f s\n", prep.matrixComputeTime)
 	}
 	setupSampler := benchmark.StartMemory()
-	startCompile := time.Now()
 	emptyCircuit := buildCircuit(prep, false)
 
 	field := ecc.BN254.ScalarField()
@@ -260,7 +280,6 @@ func runExperiment(seqLog int, rho string, L int, onlyCompile bool) benchmark.LA
 	if err != nil {
 		log.Fatalf("LAMP GPT-2 compilation failed: %v", err)
 	}
-	compileTime := time.Since(startCompile).Seconds()
 	nbConstraints := r1csSystem.GetNbConstraints()
 
 	if onlyCompile {
@@ -291,12 +310,13 @@ func runExperiment(seqLog int, rho string, L int, onlyCompile bool) benchmark.LA
 		}
 	}
 
+	// Match LED: circuit setup measures only Groth16 setup, excluding compilation.
 	startSetup := time.Now()
 	pk, vk, err := groth16.Setup(r1csSystem)
 	if err != nil {
 		log.Fatalf("LAMP GPT-2 setup failed: %v", err)
 	}
-	circuitSetupTime := compileTime + time.Since(startSetup).Seconds()
+	circuitSetupTime := time.Since(startSetup).Seconds()
 	prep.setupMemory = prep.setupMemory.Merge(setupSampler.Stop())
 	protocolSetupTime := prep.setupTime
 
@@ -477,7 +497,33 @@ func runExperiment(seqLog int, rho string, L int, onlyCompile bool) benchmark.LA
 	}
 }
 
-func prepareLayer(seqLog int, rho string, L int) *preparedLayer {
+// Inputs are shared read-only; each repetition owns fresh encoding and proof state.
+type layerInput struct {
+	tensors     []*tensor
+	specs       []claimSpec
+	computeTime float64
+}
+
+func prepareLayerInput(seqLog int) *layerInput {
+	tensors, specs, computeTime := buildGPT2MediumTensors(1 << seqLog)
+	return &layerInput{tensors: tensors, specs: specs, computeTime: computeTime}
+}
+
+func (input *layerInput) freshTensors() ([]*tensor, []claimSpec) {
+	tensors := make([]*tensor, len(input.tensors))
+	copies := make(map[*tensor]*tensor, len(tensors))
+	for i, original := range input.tensors {
+		t := &tensor{id: original.id, name: original.name, rows: original.rows, cols: original.cols, group: original.group, data: original.data}
+		tensors[i], copies[original] = t, t
+	}
+	specs := make([]claimSpec, len(input.specs))
+	for i, spec := range input.specs {
+		specs[i] = claimSpec{id: spec.id, name: spec.name, A: copies[spec.A], B: copies[spec.B], C: copies[spec.C]}
+	}
+	return tensors, specs
+}
+
+func prepareLayer(seqLog int, rho string, L int, input *layerInput) *preparedLayer {
 	seqLen := 1 << seqLog
 	p := &preparedLayer{
 		seqLog:      seqLog,
@@ -491,11 +537,11 @@ func prepareLayer(seqLog int, rho string, L int) *preparedLayer {
 
 	p.initGroups()
 
-	tensors, specs, matrixComputeTime := buildGPT2MediumTensors(seqLen)
+	tensors, specs := input.freshTensors()
 	byName := tensorMap(tensors)
 	p.inputTensor = byName["X"]
 	p.outputTensor = byName["Out"]
-	p.matrixComputeTime = matrixComputeTime
+	p.matrixComputeTime = input.computeTime
 
 	commitSampler := benchmark.StartMemory()
 	startCommit := time.Now()
