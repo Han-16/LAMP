@@ -21,6 +21,18 @@ func TestBatchedBProximityEndToEnd(t *testing.T) {
 	if result.Batch != 5 || result.MatrixSource != "file" || result.MatrixPath != path || result.MatrixComputeTime != 0 {
 		t.Fatal("batch must reuse one saved product without matrix multiplication")
 	}
+	if result.MatrixWorkers != 0 {
+		t.Fatal("file input must not record multiplication workers")
+	}
+	if result.CPLinkProofSize != 64 || result.QueryCommitmentsSize != 128 {
+		t.Fatal("proof points must use compressed sizes")
+	}
+	if result.TotalProofSize != result.Groth16ProofSize+result.MerkleProofSize+result.CPLinkProofSize+result.QueryCommitmentsSize {
+		t.Fatal("wrong proof payload total")
+	}
+	if !result.SetupMemory.Measured || !result.CommitMemory.Measured || !result.ProveMemory.Measured {
+		t.Fatal("stage memory missing")
+	}
 	if result.Constraints == 0 || result.TotalProofSize == 0 {
 		t.Fatal("batch B proximity proof produced an empty result")
 	}

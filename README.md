@@ -119,8 +119,8 @@ implementations. GPT-2 experiments retain their existing input-generation flow.
 
 Range scripts run one configuration per fresh container, sequentially. No CPU
 or memory limit is applied, so each benchmark process can use all resources
-available to Docker, and each CSV `PeakMemory(B)` value is an independent peak
-RSS measurement.
+available to Docker. LAMP records stage-specific sampled heap/RSS peaks in a
+companion memory CSV. Freivalds retains its process-wide `PeakMemory(B)` value.
 
 
 ## Running Benchmarks
@@ -206,8 +206,24 @@ benchmark/lamp_gpt2/
 benchmark/freivalds_gpt2/
 ```
 
-The LAMP timing columns (`lamp`, `lamp_batch`, and `lamp_gpt2`) use the
-same definitions as LED. Durations are formatted in ms/s:
+The LAMP outputs (`lamp`, `lamp_batch`, and `lamp_gpt2`) use LED's exact
+33-column performance header and order. Each performance file also has
+`<stem>_info.csv` and `<stem>_memory.csv` companions. Corresponding data rows
+in all three files describe the same experiment; keep them together and use
+one writer per set.
+
+The info CSV starts with LED's nine columns: `logk`, `rho`, `samples`,
+`commit_mode`, `matrix_source`, `matrix_path`, `matrix_workers`,
+`matrix_compute_time`, `matrix_load_time`. LAMP-specific `linker`, `merkle`,
+and `n` follow; batch adds `batch`, and GPT-2 adds `seq_log`, `seq_len`,
+`num_claims`, and `num_commit_groups`. GPT-2 has no single square K/N, so
+`logk` and `n` are empty. LAMP's encoded-column MSM commitments are recorded
+as `commit_mode=legacy`, matching LED's algorithm naming. Generated square
+inputs record the actual worker count; file inputs record zero.
+
+Durations use LED's format: two decimal places, `ms` below one second and
+`s` otherwise, with a space before the unit (for example `3.81 ms`, `1.23 s`).
+The commit/prove timing definitions are:
 
 - `abc_commit_time`: ABC encoding, Pedersen commitments, and Merkle tree
   construction. In GPT-2 this covers the tensor commitment groups.
@@ -224,9 +240,17 @@ same definitions as LED. Durations are formatted in ms/s:
   `cplink_prove_time`; input commitments and vector computation are excluded.
 - `commit_and_prove_time` = `total_commit_time` + `total_prove_time`.
 
-`encoding_time` remains a diagnostic subtotal already included in the three
-commitment phase timers; do not add it again. Setup, input generation/loading,
-witness construction and untimed checks are excluded from these totals.
+`encoding_time` is the ABC/tensor encoding diagnostic already included in
+`abc_commit_time`; vector encoding belongs to `vector_compute_time`.
+`pedersen_commit_time` and `merkle_commit_time` split ABC/tensor commitments.
+`commit_other_time` records residual bookkeeping outside these named timers
+and is excluded from the commit totals. Do not add diagnostic subtotals again.
+Circuit setup now includes compilation and Groth16 setup, as in LED.
+The LED-specific `d_agg_msm_time`, `q_h_msm_time`, and `verifier_msm_time`
+columns are empty because LAMP has no corresponding separate verifier phases.
+
+Setup, input generation/loading, witness construction and untimed checks are
+excluded from the commit/prove totals.
 Sampled ABC/vector blocks, external commitments and blindings are selected
 before the CP-Link proof timer and counted in `vector_compute_time`. This also
 applies to GPT-2 group-input selection. Allocation, validation and cryptographic
@@ -234,16 +258,37 @@ operations inside proof functions remain in the corresponding proof timers.
 These totals sum measured phases rather than full process wall time.
 Timing headers and meanings have changed; write results to a new CSV directory.
 
-Square-experiment CSVs also record `MatrixSource`, `MatrixPath`, and
-`MatrixLoadTime(s/ms)`. File inputs have zero `MatrixComputeTime`; loading time
-is recorded separately. Compile-only runs do not load or generate matrices.
+Square experiments record `matrix_source`, `matrix_path`, and
+`matrix_load_time` in the info CSV. File inputs have zero `matrix_compute_time`;
+loading time is recorded separately. Compile-only runs do not load or generate matrices.
 The separate generator appends sampling, computation, writing, checking, device,
 and GPU setup/kernel timings to `benchmark/matrices/matrix_compute.csv`
 (`-csv` or `LAMP_MATRIX_CSV` overrides the path). The experiment's compute column
 does not include a previously saved dataset's generation time.
 
-The added columns change the square CSV headers. Appending to an incompatible
-old CSV fails; use a new output directory or start a fresh non-append run.
+Proof sizes follow LED's compressed payload accounting. `snark_proof_bytes`
+is the native SNARK's `WriteTo(io.Discard)` byte count (serialization errors
+are fatal). `merkle_proof_bytes` counts sibling hashes only.
+`cplink_proof_bytes` counts each link's compressed G1 encoding (32 B), and
+`query_commitments_bytes` separately counts all transmitted query commitments
+at 32 B per point, preserving repeated entries. `total_proof_bytes` sums these
+four components. Statement roots, setup keys, and transport framing are excluded.
+LAMP retains its own proof structure: square and batch have two links and two
+sets of queried commitments; GPT-2 counts the actual sampled groups.
+
+The memory CSV has LED's eight columns: `logk`, `rho`, then
+`setup_peak_heap`, `setup_peak_rss`, `commit_peak_heap`, `commit_peak_rss`,
+`prove_peak_heap`, `prove_peak_rss`. Memory is sampled at phase boundaries and
+every 10 ms. Disjoint intervals of the same phase are merged by their maxima;
+Prove includes vector computation and vector commitments. Values are absolute
+process usage, not allocations attributable only to a phase. Values use MiB
+below 1 GiB and GiB otherwise, to two decimal places. RSS is supported on Linux;
+unsupported RSS and unmeasured phases are empty (including compile-only runs).
+
+Appending (`BENCHMARK_APPEND_CSV=true`) checks all three headers and data-row
+counts before writing. Old CSVs are incompatible; use a new output directory.
+A non-append run replaces all three output files. Existing measurements cannot
+be converted to the new timing and size conventions by renaming headers.
 
 Each CSV output directory also contains `system_info.json`, which records the
 CPU model, logical core count, RAM, OS, architecture, Go version, and timestamp

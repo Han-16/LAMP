@@ -4,7 +4,6 @@ import (
 	"encoding/csv"
 	"fmt"
 	"log"
-	"math"
 	"os"
 	"slices"
 	"strconv"
@@ -98,117 +97,143 @@ type FreivaldsBatchResult struct {
 }
 
 type LAMPResult struct {
-	LogK               int
-	Rho                string
-	Linker             string
-	Merkle             string
-	N                  int
-	NumQueries         int // L
-	Constraints        int
-	MatrixComputeTime  float64
-	SetupTime          float64
-	ProtocolSetupTime  float64
-	CircuitSetupTime   float64
-	CPLinkSetupTime    float64
-	MatrixCommitTime   float64
-	VectorComputeTime  float64
-	VectorCommitTime   float64
-	EncodingTime       float64
-	CommitTime         float64
-	TotalCommitTime    float64
-	MerkleProveTime    float64
-	CircuitProveTime   float64
-	CPLinkProveTime    float64
-	TotalProveTime     float64
-	CommitAndProveTime float64
-	CircuitVerifyTime  float64
-	MerkleVerifyTime   float64
-	CPLinkVerifyTime   float64
-	TotalVerifyTime    float64
-	MerkleProofSize    int
-	Groth16ProofSize   int
-	CPLinkProofSize    int
-	TotalProofSize     int
-	PeakMemoryBytes    uint64
-	MatrixSource       string
-	MatrixPath         string
-	MatrixLoadTime     float64
+	PedersenCommitTime   float64
+	MerkleCommitTime     float64
+	CommitOtherTime      float64
+	MatrixWorkers        int
+	SetupMemory          Memory
+	CommitMemory         Memory
+	ProveMemory          Memory
+	LogK                 int
+	Rho                  string
+	Linker               string
+	Merkle               string
+	N                    int
+	NumQueries           int // L
+	Constraints          int
+	MatrixComputeTime    float64
+	SetupTime            float64
+	ProtocolSetupTime    float64
+	CircuitSetupTime     float64
+	CPLinkSetupTime      float64
+	MatrixCommitTime     float64
+	VectorComputeTime    float64
+	VectorCommitTime     float64
+	EncodingTime         float64
+	CommitTime           float64
+	TotalCommitTime      float64
+	MerkleProveTime      float64
+	CircuitProveTime     float64
+	CPLinkProveTime      float64
+	TotalProveTime       float64
+	CommitAndProveTime   float64
+	CircuitVerifyTime    float64
+	MerkleVerifyTime     float64
+	CPLinkVerifyTime     float64
+	TotalVerifyTime      float64
+	MerkleProofSize      int
+	Groth16ProofSize     int
+	CPLinkProofSize      int
+	QueryCommitmentsSize int
+	TotalProofSize       int
+	PeakMemoryBytes      uint64
+	MatrixSource         string
+	MatrixPath           string
+	MatrixLoadTime       float64
 }
 
 type LAMPBATCHResult struct {
-	LogK               int
-	Rho                string
-	Linker             string
-	Merkle             string
-	Batch              int
-	N                  int
-	NumQueries         int // L
-	Constraints        int
-	MatrixComputeTime  float64
-	SetupTime          float64
-	ProtocolSetupTime  float64
-	CircuitSetupTime   float64
-	CPLinkSetupTime    float64
-	MatrixCommitTime   float64
-	VectorComputeTime  float64
-	VectorCommitTime   float64
-	EncodingTime       float64
-	CommitTime         float64
-	TotalCommitTime    float64
-	MerkleProveTime    float64
-	CircuitProveTime   float64
-	CPLinkProveTime    float64
-	TotalProveTime     float64
-	CommitAndProveTime float64
-	CircuitVerifyTime  float64
-	MerkleVerifyTime   float64
-	CPLinkVerifyTime   float64
-	TotalVerifyTime    float64
-	MerkleProofSize    int
-	Groth16ProofSize   int
-	CPLinkProofSize    int
-	TotalProofSize     int
-	PeakMemoryBytes    uint64
-	MatrixSource       string
-	MatrixPath         string
-	MatrixLoadTime     float64
+	PedersenCommitTime   float64
+	MerkleCommitTime     float64
+	CommitOtherTime      float64
+	MatrixWorkers        int
+	SetupMemory          Memory
+	CommitMemory         Memory
+	ProveMemory          Memory
+	LogK                 int
+	Rho                  string
+	Linker               string
+	Merkle               string
+	Batch                int
+	N                    int
+	NumQueries           int // L
+	Constraints          int
+	MatrixComputeTime    float64
+	SetupTime            float64
+	ProtocolSetupTime    float64
+	CircuitSetupTime     float64
+	CPLinkSetupTime      float64
+	MatrixCommitTime     float64
+	VectorComputeTime    float64
+	VectorCommitTime     float64
+	EncodingTime         float64
+	CommitTime           float64
+	TotalCommitTime      float64
+	MerkleProveTime      float64
+	CircuitProveTime     float64
+	CPLinkProveTime      float64
+	TotalProveTime       float64
+	CommitAndProveTime   float64
+	CircuitVerifyTime    float64
+	MerkleVerifyTime     float64
+	CPLinkVerifyTime     float64
+	TotalVerifyTime      float64
+	MerkleProofSize      int
+	Groth16ProofSize     int
+	CPLinkProofSize      int
+	QueryCommitmentsSize int
+	TotalProofSize       int
+	PeakMemoryBytes      uint64
+	MatrixSource         string
+	MatrixPath           string
+	MatrixLoadTime       float64
 }
 
 type LAMPGPT2Result struct {
-	SeqLog             int
-	SeqLen             int
-	Rho                string
-	Linker             string
-	Merkle             string
-	NumQueries         int
-	NumClaims          int
-	NumCommitGroups    int
-	Constraints        int
-	MatrixComputeTime  float64
-	SetupTime          float64
-	ProtocolSetupTime  float64
-	CircuitSetupTime   float64
-	CPLinkSetupTime    float64
-	MatrixCommitTime   float64
-	VectorComputeTime  float64
-	VectorCommitTime   float64
-	EncodingTime       float64
-	CommitTime         float64
-	TotalCommitTime    float64
-	MerkleProveTime    float64
-	CircuitProveTime   float64
-	CPLinkProveTime    float64
-	TotalProveTime     float64
-	CommitAndProveTime float64
-	CircuitVerifyTime  float64
-	MerkleVerifyTime   float64
-	CPLinkVerifyTime   float64
-	TotalVerifyTime    float64
-	MerkleProofSize    int
-	Groth16ProofSize   int
-	CPLinkProofSize    int
-	TotalProofSize     int
-	PeakMemoryBytes    uint64
+	MatrixSource, MatrixPath string
+	MatrixLoadTime           float64
+	PedersenCommitTime       float64
+	MerkleCommitTime         float64
+	CommitOtherTime          float64
+	MatrixWorkers            int
+	SetupMemory              Memory
+	CommitMemory             Memory
+	ProveMemory              Memory
+	SeqLog                   int
+	SeqLen                   int
+	Rho                      string
+	Linker                   string
+	Merkle                   string
+	NumQueries               int
+	NumClaims                int
+	NumCommitGroups          int
+	Constraints              int
+	MatrixComputeTime        float64
+	SetupTime                float64
+	ProtocolSetupTime        float64
+	CircuitSetupTime         float64
+	CPLinkSetupTime          float64
+	MatrixCommitTime         float64
+	VectorComputeTime        float64
+	VectorCommitTime         float64
+	EncodingTime             float64
+	CommitTime               float64
+	TotalCommitTime          float64
+	MerkleProveTime          float64
+	CircuitProveTime         float64
+	CPLinkProveTime          float64
+	TotalProveTime           float64
+	CommitAndProveTime       float64
+	CircuitVerifyTime        float64
+	MerkleVerifyTime         float64
+	CPLinkVerifyTime         float64
+	TotalVerifyTime          float64
+	MerkleProofSize          int
+	Groth16ProofSize         int
+	CPLinkProofSize          int
+	QueryCommitmentsSize     int
+	TotalProofSize           int
+	PeakMemoryBytes          uint64
 }
 
 type FreivaldsGPT2Result struct {
@@ -272,171 +297,6 @@ func AppendFreivaldsBatchResultToCSV(writer *csv.Writer, res FreivaldsBatchResul
 	appendCSV(writer, record, fmt.Sprintf("Freivalds batch: logK=%d, batch=%d, constraints=%d", res.LogK, res.Batch, res.Constraints))
 }
 
-func InitLAMPCSV(filename string) (*os.File, *csv.Writer) {
-	return initCSV(filename, []string{
-		"LogK", "Rho", "Linker", "Merkle", "N", "NumQueries", "Constraints",
-		"MatrixComputeTime(s/ms)", "SetupTime(s/ms)",
-		"ProtocolSetupTime(s/ms)", "CircuitSetupTime(s/ms)", "CPLinkSetupTime(s/ms)",
-		"abc_commit_time", "vector_compute_time", "vector_commit_time",
-		"encoding_time", "commit_time", "total_commit_time",
-		"merkle_prove_time", "circuit_prove_time",
-		"cplink_prove_time", "total_prove_time", "commit_and_prove_time",
-		"CircuitVerifyTime(s/ms)", "MerkleVerifyTime(s/ms)", "CPLinkVerifyTime(s/ms)", "TotalVerifyTime(s/ms)",
-		"MerkleProofSize(B)", "Groth16ProofSize(B)", "CPLinkProofSize(B)", "TotalProofSize(B)", "PeakMemory(B)", "MatrixSource", "MatrixPath", "MatrixLoadTime(s/ms)",
-	})
-}
-
-func AppendLAMPResultToCSV(writer *csv.Writer, res LAMPResult) {
-	record := []string{
-		strconv.Itoa(res.LogK),
-		res.Rho,
-		res.Linker,
-		res.Merkle,
-		strconv.Itoa(res.N),
-		strconv.Itoa(res.NumQueries),
-		strconv.Itoa(res.Constraints),
-		formatSeconds(res.MatrixComputeTime),
-		formatSeconds(res.SetupTime),
-		formatSeconds(res.ProtocolSetupTime),
-		formatSeconds(res.CircuitSetupTime),
-		formatSeconds(res.CPLinkSetupTime),
-		formatSeconds(res.MatrixCommitTime),
-		formatSeconds(res.VectorComputeTime),
-		formatSeconds(res.VectorCommitTime),
-		formatSeconds(res.EncodingTime),
-		formatSeconds(res.CommitTime),
-		formatSeconds(res.TotalCommitTime),
-		formatSeconds(res.MerkleProveTime),
-		formatSeconds(res.CircuitProveTime),
-		formatSeconds(res.CPLinkProveTime),
-		formatSeconds(res.TotalProveTime),
-		formatSeconds(res.CommitAndProveTime),
-		formatSeconds(res.CircuitVerifyTime),
-		formatSeconds(res.MerkleVerifyTime),
-		formatSeconds(res.CPLinkVerifyTime),
-		formatSeconds(res.TotalVerifyTime),
-		strconv.Itoa(res.MerkleProofSize),
-		strconv.Itoa(res.Groth16ProofSize),
-		strconv.Itoa(res.CPLinkProofSize),
-		strconv.Itoa(res.TotalProofSize),
-		strconv.FormatUint(res.PeakMemoryBytes, 10),
-		res.MatrixSource,
-		res.MatrixPath,
-		formatSeconds(res.MatrixLoadTime),
-	}
-	appendCSV(writer, record, fmt.Sprintf("LAMP Protocol: logK=%d, rho=%s, linker=%s, merkle=%s, L=%d, constraints=%d", res.LogK, res.Rho, res.Linker, res.Merkle, res.NumQueries, res.Constraints))
-}
-
-func InitLAMPBATCHCSV(filename string) (*os.File, *csv.Writer) {
-	return initCSV(filename, []string{
-		"LogK", "Rho", "Linker", "Merkle", "Batch", "N", "NumQueries", "Constraints",
-		"MatrixComputeTime(s/ms)", "SetupTime(s/ms)",
-		"ProtocolSetupTime(s/ms)", "CircuitSetupTime(s/ms)", "CPLinkSetupTime(s/ms)",
-		"abc_commit_time", "vector_compute_time", "vector_commit_time",
-		"encoding_time", "commit_time", "total_commit_time",
-		"merkle_prove_time", "circuit_prove_time",
-		"cplink_prove_time", "total_prove_time", "commit_and_prove_time",
-		"CircuitVerifyTime(s/ms)", "MerkleVerifyTime(s/ms)", "CPLinkVerifyTime(s/ms)", "TotalVerifyTime(s/ms)",
-		"MerkleProofSize(B)", "Groth16ProofSize(B)", "CPLinkProofSize(B)", "TotalProofSize(B)", "PeakMemory(B)", "MatrixSource", "MatrixPath", "MatrixLoadTime(s/ms)",
-	})
-}
-
-func AppendLAMPBATCHResultToCSV(writer *csv.Writer, res LAMPBATCHResult) {
-	record := []string{
-		strconv.Itoa(res.LogK),
-		res.Rho,
-		res.Linker,
-		res.Merkle,
-		strconv.Itoa(res.Batch),
-		strconv.Itoa(res.N),
-		strconv.Itoa(res.NumQueries),
-		strconv.Itoa(res.Constraints),
-		formatSeconds(res.MatrixComputeTime),
-		formatSeconds(res.SetupTime),
-		formatSeconds(res.ProtocolSetupTime),
-		formatSeconds(res.CircuitSetupTime),
-		formatSeconds(res.CPLinkSetupTime),
-		formatSeconds(res.MatrixCommitTime),
-		formatSeconds(res.VectorComputeTime),
-		formatSeconds(res.VectorCommitTime),
-		formatSeconds(res.EncodingTime),
-		formatSeconds(res.CommitTime),
-		formatSeconds(res.TotalCommitTime),
-		formatSeconds(res.MerkleProveTime),
-		formatSeconds(res.CircuitProveTime),
-		formatSeconds(res.CPLinkProveTime),
-		formatSeconds(res.TotalProveTime),
-		formatSeconds(res.CommitAndProveTime),
-		formatSeconds(res.CircuitVerifyTime),
-		formatSeconds(res.MerkleVerifyTime),
-		formatSeconds(res.CPLinkVerifyTime),
-		formatSeconds(res.TotalVerifyTime),
-		strconv.Itoa(res.MerkleProofSize),
-		strconv.Itoa(res.Groth16ProofSize),
-		strconv.Itoa(res.CPLinkProofSize),
-		strconv.Itoa(res.TotalProofSize),
-		strconv.FormatUint(res.PeakMemoryBytes, 10),
-		res.MatrixSource,
-		res.MatrixPath,
-		formatSeconds(res.MatrixLoadTime),
-	}
-	appendCSV(writer, record, fmt.Sprintf("LAMPBATCH Protocol: logK=%d, rho=%s, linker=%s, merkle=%s, L=%d, batch=%d, constraints=%d", res.LogK, res.Rho, res.Linker, res.Merkle, res.NumQueries, res.Batch, res.Constraints))
-}
-
-func InitLAMPGPT2CSV(filename string) (*os.File, *csv.Writer) {
-	return initCSV(filename, []string{
-		"SeqLog", "SeqLen", "Rho", "Linker", "Merkle", "NumQueries", "NumClaims", "NumCommitGroups", "Constraints",
-		"MatrixComputeTime(s/ms)", "SetupTime(s/ms)",
-		"ProtocolSetupTime(s/ms)", "CircuitSetupTime(s/ms)", "CPLinkSetupTime(s/ms)",
-		"abc_commit_time", "vector_compute_time", "vector_commit_time",
-		"encoding_time", "commit_time", "total_commit_time",
-		"merkle_prove_time", "circuit_prove_time",
-		"cplink_prove_time", "total_prove_time", "commit_and_prove_time",
-		"CircuitVerifyTime(s/ms)", "MerkleVerifyTime(s/ms)", "CPLinkVerifyTime(s/ms)", "TotalVerifyTime(s/ms)",
-		"MerkleProofSize(B)", "Groth16ProofSize(B)", "CPLinkProofSize(B)", "TotalProofSize(B)", "PeakMemory(B)",
-	})
-}
-
-func AppendLAMPGPT2ResultToCSV(writer *csv.Writer, res LAMPGPT2Result) {
-	record := []string{
-		strconv.Itoa(res.SeqLog),
-		strconv.Itoa(res.SeqLen),
-		res.Rho,
-		res.Linker,
-		res.Merkle,
-		strconv.Itoa(res.NumQueries),
-		strconv.Itoa(res.NumClaims),
-		strconv.Itoa(res.NumCommitGroups),
-		strconv.Itoa(res.Constraints),
-		formatSeconds(res.MatrixComputeTime),
-		formatSeconds(res.SetupTime),
-		formatSeconds(res.ProtocolSetupTime),
-		formatSeconds(res.CircuitSetupTime),
-		formatSeconds(res.CPLinkSetupTime),
-		formatSeconds(res.MatrixCommitTime),
-		formatSeconds(res.VectorComputeTime),
-		formatSeconds(res.VectorCommitTime),
-		formatSeconds(res.EncodingTime),
-		formatSeconds(res.CommitTime),
-		formatSeconds(res.TotalCommitTime),
-		formatSeconds(res.MerkleProveTime),
-		formatSeconds(res.CircuitProveTime),
-		formatSeconds(res.CPLinkProveTime),
-		formatSeconds(res.TotalProveTime),
-		formatSeconds(res.CommitAndProveTime),
-		formatSeconds(res.CircuitVerifyTime),
-		formatSeconds(res.MerkleVerifyTime),
-		formatSeconds(res.CPLinkVerifyTime),
-		formatSeconds(res.TotalVerifyTime),
-		strconv.Itoa(res.MerkleProofSize),
-		strconv.Itoa(res.Groth16ProofSize),
-		strconv.Itoa(res.CPLinkProofSize),
-		strconv.Itoa(res.TotalProofSize),
-		strconv.FormatUint(res.PeakMemoryBytes, 10),
-	}
-	appendCSV(writer, record, fmt.Sprintf("LAMP GPT-2 medium layer: seq=2^%d, rho=%s, linker=%s, merkle=%s, L=%d, claims=%d, constraints=%d", res.SeqLog, res.Rho, res.Linker, res.Merkle, res.NumQueries, res.NumClaims, res.Constraints))
-}
-
 func InitFreivaldsGPT2CSV(filename string) (*os.File, *csv.Writer) {
 	return initCSV(filename, []string{
 		"SeqLog", "SeqLen", "NumClaims", "Constraints",
@@ -465,8 +325,8 @@ func formatSeconds(seconds float64) string {
 }
 
 func FormatDurationSeconds(seconds float64) string {
-	if math.Abs(seconds) < 0.005 {
-		return fmt.Sprintf("%dms", int(math.Round(seconds*1000)))
+	if seconds < 1 {
+		return fmt.Sprintf("%.2f ms", seconds*1000)
 	}
-	return fmt.Sprintf("%.2fs", seconds)
+	return fmt.Sprintf("%.2f s", seconds)
 }

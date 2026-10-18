@@ -54,7 +54,21 @@ func TestCommitAndProveTimingSplit(t *testing.T) {
 	if r.MatrixCommitTime <= 0 || r.VectorComputeTime <= 0 || r.VectorCommitTime <= 0 {
 		t.Fatal("missing commitment phase timing")
 	}
+	if r.CPLinkProofSize != 64 || r.QueryCommitmentsSize != 128 {
+		t.Fatalf("expected two compressed links and four query commitments: link=%d query=%d", r.CPLinkProofSize, r.QueryCommitmentsSize)
+	}
+	if r.TotalProofSize != r.Groth16ProofSize+r.MerkleProofSize+r.CPLinkProofSize+r.QueryCommitmentsSize {
+		t.Fatal("proof payload total omits or double counts a component")
+	}
+	if !r.SetupMemory.Measured || !r.CommitMemory.Measured || !r.ProveMemory.Measured || r.SetupMemory.HeapBytes == 0 {
+		t.Fatal("stage memory was not sampled")
+	}
+	if r.MatrixWorkers < 1 {
+		t.Fatal("generated input must record worker count")
+	}
 	checks := [][2]float64{
+		{r.MatrixCommitTime, r.EncodingTime + r.PedersenCommitTime + r.MerkleCommitTime},
+		{r.SetupTime, r.ProtocolSetupTime + r.CircuitSetupTime + r.CPLinkSetupTime},
 		{r.CommitTime, r.MatrixCommitTime + r.VectorCommitTime},
 		{r.TotalCommitTime, r.MatrixCommitTime + r.VectorComputeTime + r.VectorCommitTime},
 		{r.TotalProveTime, r.CircuitProveTime + r.MerkleProveTime + r.CPLinkProveTime},

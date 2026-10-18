@@ -3,6 +3,7 @@ package matrix
 import (
 	"fmt"
 	"os"
+	"runtime"
 	"time"
 )
 
@@ -10,6 +11,7 @@ import (
 type Input struct {
 	A, B, C       Matrix
 	Source, Path  string
+	Workers       int
 	Compute, Load time.Duration
 }
 
@@ -56,7 +58,8 @@ func Prepare(k int, source, dir string) (Input, error) {
 		return input, err
 	}
 	start := time.Now()
-	input.C = Multiply(input.A, input.B)
+	input.Workers = min(k, runtime.GOMAXPROCS(0))
+	input.C = MultiplyWithWorkers(input.A, input.B, input.Workers)
 	input.Compute = time.Since(start)
 	return input, nil
 }

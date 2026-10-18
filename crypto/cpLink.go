@@ -35,7 +35,8 @@ type QALinkVerification struct {
 	VK              QALinkVerifyingKey
 }
 
-const G1AffineSizeBytes = 64
+// G1AffineSizeBytes is the compressed payload size, matching LED.
+const G1AffineSizeBytes = bn254.SizeOfG1AffineCompressed
 
 func SetupQALink(blockCount, blockLen int, snarkCK CommitKey, externalCK CommitKey) (QALinkProvingKey, QALinkVerifyingKey, error) {
 	if blockCount <= 0 || blockLen <= 0 {
@@ -210,8 +211,9 @@ func VerifyQALinksBatched(verifications []QALinkVerification, context ...fr.Elem
 	return err == nil && ok
 }
 
-func QALinkProofSizeBytes(QALinkProof) int {
-	return G1AffineSizeBytes
+func QALinkProofSizeBytes(proof QALinkProof) int {
+	encoded := proof.Pi.Bytes()
+	return len(encoded)
 }
 
 func validateQALinkWitnessShape(blocks [][]fr.Element, betas []fr.Element, blockCount, blockLen int) error {

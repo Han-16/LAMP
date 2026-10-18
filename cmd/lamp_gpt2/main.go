@@ -1,9 +1,9 @@
 package main
 
 import (
-	"bytes"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"path/filepath"
 	"strings"
@@ -166,15 +166,22 @@ type preparedLayer struct {
 	scalarMultiProof crypto.MerkleMultiProof
 	scalarCache      map[string]int
 
-	matrixComputeTime float64
-	setupTime         float64
-	matrixCommitTime  float64
-	vectorComputeTime float64
-	vectorCommitTime  float64
-	encodingTime      float64
-	commitTime        float64
-	totalCommitTime   float64
-	merkleProveTime   float64
+	setupMemory        benchmark.Memory
+	commitMemory       benchmark.Memory
+	proveMemory        benchmark.Memory
+	pedersenCommitTime float64
+	merkleCommitTime   float64
+	commitOtherTime    float64
+	vectorEncodingTime float64
+	matrixComputeTime  float64
+	setupTime          float64
+	matrixCommitTime   float64
+	vectorComputeTime  float64
+	vectorCommitTime   float64
+	encodingTime       float64
+	commitTime         float64
+	totalCommitTime    float64
+	merkleProveTime    float64
 }
 
 func main() {
@@ -197,8 +204,15 @@ func main() {
 		log.Fatalf("failed to create output directory: %v", err)
 	}
 	csvPath := filepath.Join(outputDir, "lamp_gpt2_benchmark_results.csv")
-	file, writer := benchmark.InitLAMPGPT2CSV(csvPath)
-	defer file.Close()
+	writer, err := benchmark.InitLAMPGPT2CSV(csvPath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer func() {
+		if err := writer.Close(); err != nil {
+			log.Fatal(err)
+		}
+	}()
 
 	if *allFlag || *rangeFlag {
 		if *fromFlag > *toFlag {
@@ -207,14 +221,18 @@ func main() {
 		fmt.Printf("Running LAMP GPT-2 range: seq=%d..%d, rho=%s, L=%d, linker=%s, merkle=%s\n", *fromFlag, *toFlag, *rhoFlag, *LFlag, linkerQALink, merkleMulti)
 		for seqLog := *fromFlag; seqLog <= *toFlag; seqLog++ {
 			res := runExperiment(seqLog, *rhoFlag, *LFlag, *compileFlag)
-			benchmark.AppendLAMPGPT2ResultToCSV(writer, res)
+			if err := benchmark.AppendLAMPGPT2ResultToCSV(writer, res); err != nil {
+				log.Fatal(err)
+			}
 			fmt.Println("----------------------------------------------------------------")
 		}
 		return
 	}
 
 	res := runExperiment(*seqFlag, *rhoFlag, *LFlag, *compileFlag)
-	benchmark.AppendLAMPGPT2ResultToCSV(writer, res)
+	if err := benchmark.AppendLAMPGPT2ResultToCSV(writer, res); err != nil {
+		log.Fatal(err)
+	}
 }
 
 func runExperiment(seqLog int, rho string, L int, onlyCompile bool) benchmark.LAMPGPT2Result {
@@ -233,6 +251,8 @@ func runExperiment(seqLog int, rho string, L int, onlyCompile bool) benchmark.LA
 		prep = prepareLayer(seqLog, rho, L)
 		fmt.Printf("   ✅ Matrix Compute Time: %.2f s\n", prep.matrixComputeTime)
 	}
+	setupSampler := benchmark.StartMemory()
+	startCompile := time.Now()
 	emptyCircuit := buildCircuit(prep, false)
 
 	field := ecc.BN254.ScalarField()
@@ -240,11 +260,14 @@ func runExperiment(seqLog int, rho string, L int, onlyCompile bool) benchmark.LA
 	if err != nil {
 		log.Fatalf("LAMP GPT-2 compilation failed: %v", err)
 	}
+	compileTime := time.Since(startCompile).Seconds()
 	nbConstraints := r1csSystem.GetNbConstraints()
 
 	if onlyCompile {
+		setupSampler.Stop()
 		fmt.Printf("LAMP GPT-2 circuit compiled. Constraints: %d\n", nbConstraints)
 		return benchmark.LAMPGPT2Result{
+			MatrixSource:      "compile",
 			SeqLog:            seqLog,
 			SeqLen:            seqLen,
 			Rho:               rho,
@@ -273,10 +296,12 @@ func runExperiment(seqLog int, rho string, L int, onlyCompile bool) benchmark.LA
 	if err != nil {
 		log.Fatalf("LAMP GPT-2 setup failed: %v", err)
 	}
-	circuitSetupTime := time.Since(startSetup).Seconds()
+	circuitSetupTime := compileTime + time.Since(startSetup).Seconds()
+	prep.setupMemory = prep.setupMemory.Merge(setupSampler.Stop())
 	protocolSetupTime := prep.setupTime
 
 	assignment := buildCircuit(prep, true)
+	setupSampler = benchmark.StartMemory()
 	startProtocolBindSetup := time.Now()
 	prover := protocol.NewProver(pk, prep.extGroups[groupS].ck, nil)
 	verifier := protocol.NewVerifier(vk, prep.extGroups[groupS].ck, prover.CK2)
@@ -302,6 +327,8 @@ func runExperiment(seqLog int, rho string, L int, onlyCompile bool) benchmark.LA
 	}
 	cpLinkSetupTime = time.Since(startCPLinkSetup).Seconds()
 	setupTime := protocolSetupTime + circuitSetupTime + cpLinkSetupTime
+	prep.setupMemory = prep.setupMemory.Merge(setupSampler.Stop())
+	proveSampler := benchmark.StartMemory()
 
 	proofWitness, err := frontend.NewWitness(assignment, field)
 	if err != nil {
@@ -343,6 +370,7 @@ func runExperiment(seqLog int, rho string, L int, onlyCompile bool) benchmark.LA
 		linkProofs[groupID] = linkProof
 	}
 	cpLinkProveTime := time.Since(startOffline).Seconds()
+	prep.proveMemory = prep.proveMemory.Merge(proveSampler.Stop())
 
 	publicWitness, err := proofWitness.Public()
 	if err != nil {
@@ -381,15 +409,18 @@ func runExperiment(seqLog int, rho string, L int, onlyCompile bool) benchmark.LA
 	cpLinkVerifyTime := time.Since(startCPLink).Seconds()
 	totalVerifyTime := time.Since(startVerify).Seconds()
 
-	var buf bytes.Buffer
-	proof.WriteTo(&buf)
-	groth16ProofSize := buf.Len()
+	snarkBytes, err := proof.WriteTo(io.Discard)
+	if err != nil {
+		log.Fatalf("measure SNARK proof: %v", err)
+	}
+	groth16ProofSize := int(snarkBytes)
 	merkleProofSize := prep.merkleProofSize()
+	queryCommitmentsSize := prep.openedMerkleCommitmentCount() * crypto.G1AffineSizeBytes
 	cpLinkProofSize := 0
 	for i := range linkProofs {
 		cpLinkProofSize += crypto.QALinkProofSizeBytes(linkProofs[i])
 	}
-	totalProofSize := groth16ProofSize + merkleProofSize + cpLinkProofSize
+	totalProofSize := groth16ProofSize + merkleProofSize + cpLinkProofSize + queryCommitmentsSize
 	totalProveTime := prep.merkleProveTime + circuitProveTime + cpLinkProveTime
 
 	fmt.Printf("Commit: ABC=%s, vector compute=%s, vector commit=%s, total=%s\n",
@@ -398,43 +429,51 @@ func runExperiment(seqLog int, rho string, L int, onlyCompile bool) benchmark.LA
 	fmt.Printf("Total Prove Time: %s; Commit and Prove Time: %s\n",
 		benchmark.FormatDurationSeconds(totalProveTime), benchmark.FormatDurationSeconds(prep.totalCommitTime+totalProveTime))
 	fmt.Println("LAMP GPT-2 proof verified successfully")
-	fmt.Printf("Proof sizes: Groth16=%d B, Merkle=%d B, CPLink=%d B, Total=%d B\n", groth16ProofSize, merkleProofSize, cpLinkProofSize, totalProofSize)
+	fmt.Printf("Proof sizes: Groth16=%d B, Merkle=%d B, CPLink=%d B, Query commitments=%d B, Total=%d B\n", groth16ProofSize, merkleProofSize, cpLinkProofSize, queryCommitmentsSize, totalProofSize)
 
 	return benchmark.LAMPGPT2Result{
-		SeqLog:             seqLog,
-		SeqLen:             seqLen,
-		Rho:                rho,
-		Linker:             linker,
-		Merkle:             merkle,
-		NumQueries:         L,
-		NumClaims:          len(prep.claims),
-		NumCommitGroups:    numGroups,
-		Constraints:        nbConstraints,
-		MatrixComputeTime:  prep.matrixComputeTime,
-		SetupTime:          setupTime,
-		ProtocolSetupTime:  protocolSetupTime,
-		CircuitSetupTime:   circuitSetupTime,
-		CPLinkSetupTime:    cpLinkSetupTime,
-		MatrixCommitTime:   prep.matrixCommitTime,
-		VectorComputeTime:  prep.vectorComputeTime,
-		VectorCommitTime:   prep.vectorCommitTime,
-		EncodingTime:       prep.encodingTime,
-		CommitTime:         prep.commitTime,
-		TotalCommitTime:    prep.totalCommitTime,
-		MerkleProveTime:    prep.merkleProveTime,
-		CircuitProveTime:   circuitProveTime,
-		CPLinkProveTime:    cpLinkProveTime,
-		TotalProveTime:     totalProveTime,
-		CommitAndProveTime: prep.totalCommitTime + totalProveTime,
-		CircuitVerifyTime:  circuitVerifyTime,
-		MerkleVerifyTime:   merkleVerifyTime,
-		CPLinkVerifyTime:   cpLinkVerifyTime,
-		TotalVerifyTime:    totalVerifyTime,
-		MerkleProofSize:    merkleProofSize,
-		Groth16ProofSize:   groth16ProofSize,
-		CPLinkProofSize:    cpLinkProofSize,
-		TotalProofSize:     totalProofSize,
-		PeakMemoryBytes:    benchmark.PeakRSSBytes(),
+		SeqLog:               seqLog,
+		SeqLen:               seqLen,
+		Rho:                  rho,
+		Linker:               linker,
+		Merkle:               merkle,
+		NumQueries:           L,
+		NumClaims:            len(prep.claims),
+		NumCommitGroups:      numGroups,
+		Constraints:          nbConstraints,
+		MatrixComputeTime:    prep.matrixComputeTime,
+		SetupTime:            setupTime,
+		ProtocolSetupTime:    protocolSetupTime,
+		CircuitSetupTime:     circuitSetupTime,
+		CPLinkSetupTime:      cpLinkSetupTime,
+		MatrixCommitTime:     prep.matrixCommitTime,
+		PedersenCommitTime:   prep.pedersenCommitTime,
+		MerkleCommitTime:     prep.merkleCommitTime,
+		CommitOtherTime:      prep.commitOtherTime,
+		MatrixSource:         "generate",
+		SetupMemory:          prep.setupMemory,
+		CommitMemory:         prep.commitMemory,
+		ProveMemory:          prep.proveMemory,
+		VectorComputeTime:    prep.vectorComputeTime,
+		VectorCommitTime:     prep.vectorCommitTime,
+		EncodingTime:         prep.encodingTime,
+		CommitTime:           prep.commitTime,
+		TotalCommitTime:      prep.totalCommitTime,
+		MerkleProveTime:      prep.merkleProveTime,
+		CircuitProveTime:     circuitProveTime,
+		CPLinkProveTime:      cpLinkProveTime,
+		TotalProveTime:       totalProveTime,
+		CommitAndProveTime:   prep.totalCommitTime + totalProveTime,
+		CircuitVerifyTime:    circuitVerifyTime,
+		MerkleVerifyTime:     merkleVerifyTime,
+		CPLinkVerifyTime:     cpLinkVerifyTime,
+		TotalVerifyTime:      totalVerifyTime,
+		MerkleProofSize:      merkleProofSize,
+		Groth16ProofSize:     groth16ProofSize,
+		CPLinkProofSize:      cpLinkProofSize,
+		TotalProofSize:       totalProofSize,
+		QueryCommitmentsSize: queryCommitmentsSize,
+		PeakMemoryBytes:      benchmark.PeakRSSBytes(),
 	}
 }
 
@@ -458,6 +497,7 @@ func prepareLayer(seqLog int, rho string, L int) *preparedLayer {
 	p.outputTensor = byName["Out"]
 	p.matrixComputeTime = matrixComputeTime
 
+	commitSampler := benchmark.StartMemory()
 	startCommit := time.Now()
 	for _, t := range tensors {
 		p.commitTensor(t, rho)
@@ -465,7 +505,10 @@ func prepareLayer(seqLog int, rho string, L int) *preparedLayer {
 	for i := 0; i < groupScalar; i++ {
 		p.buildGroupTree(i)
 	}
-	p.matrixCommitTime = time.Since(startCommit).Seconds()
+	p.commitOtherTime = time.Since(startCommit).Seconds() - p.encodingTime - p.pedersenCommitTime - p.merkleCommitTime
+	p.matrixCommitTime = p.encodingTime + p.pedersenCommitTime + p.merkleCommitTime
+	p.commitMemory = commitSampler.Stop()
+	proveSampler := benchmark.StartMemory()
 	startCompute := time.Now()
 	p.tensorCm = crypto.HashElementsMiMC(p.extGroups[groupS].root, p.extGroups[groupD].root, p.extGroups[groupDh].root, p.extGroups[groupM].root)
 
@@ -492,6 +535,7 @@ func prepareLayer(seqLog int, rho string, L int) *preparedLayer {
 	p.generateMerkleMultiProofs()
 	p.commitTime = p.matrixCommitTime + p.vectorCommitTime
 	p.totalCommitTime = p.commitTime + p.vectorComputeTime
+	p.proveMemory = proveSampler.Stop()
 
 	return p
 }
@@ -523,6 +567,8 @@ func prepareLayerShapeOnly(seqLog int, rho string, L int) *preparedLayer {
 }
 
 func (p *preparedLayer) initGroups() {
+	memory := benchmark.StartMemory()
+	defer func() { p.setupMemory = p.setupMemory.Merge(memory.Stop()) }()
 	startSetup := time.Now()
 	p.extGroups[groupS] = newExtGroup(groupS, p.seqLen)
 	p.extGroups[groupD] = newExtGroup(groupD, gpt2D)
@@ -697,7 +743,9 @@ func (p *preparedLayer) commitTensor(t *tensor, rho string) {
 	t.colsEnc = matrix.Transpose(enc, t.rows, n)
 	p.encodingTime += time.Since(startEncoding).Seconds()
 	group := p.extGroups[t.group]
+	startPedersen := time.Now()
 	commits, blindings := crypto.BatchPedersenCommitBlinded(t.colsEnc, group.ck)
+	p.pedersenCommitTime += time.Since(startPedersen).Seconds()
 	t.leafStart = len(group.commits)
 	group.blocks = append(group.blocks, t.colsEnc...)
 	group.commits = append(group.commits, commits...)
@@ -708,11 +756,15 @@ func (p *preparedLayer) commitTensor(t *tensor, rho string) {
 }
 
 func (p *preparedLayer) buildGroupTree(groupID int) {
+	start := time.Now()
 	group := p.extGroups[groupID]
 	tree, root, depth := crypto.BuildMerkleTreeFromGroupElementsWithMeta(group.commits, group.metas)
 	group.tree = tree
 	group.root = root
 	group.depth = depth
+	if groupID != groupScalar {
+		p.merkleCommitTime += time.Since(start).Seconds()
+	}
 }
 
 func (p *preparedLayer) prepareClaim(spec claimSpec, challengeB fr.Element) claimWitness {
@@ -728,19 +780,19 @@ func (p *preparedLayer) prepareClaim(spec claimSpec, challengeB fr.Element) clai
 	encoderOut := crypto.NewEncoder(spec.C.cols, codewordLength(spec.C.cols, p.rho))
 	startEncoding := time.Now()
 	_, encX, err := encoderIn.Encode(vecX)
-	p.encodingTime += time.Since(startEncoding).Seconds()
+	p.vectorEncodingTime += time.Since(startEncoding).Seconds()
 	if err != nil {
 		log.Fatalf("failed to encode folded X for %s: %v", spec.name, err)
 	}
 	startEncoding = time.Now()
 	_, encYZ, err := encoderOut.Encode(vecYZ)
-	p.encodingTime += time.Since(startEncoding).Seconds()
+	p.vectorEncodingTime += time.Since(startEncoding).Seconds()
 	if err != nil {
 		log.Fatalf("failed to encode folded YZ for %s: %v", spec.name, err)
 	}
 	startEncoding = time.Now()
 	_, encBTest, err := encoderOut.Encode(vecBTest)
-	p.encodingTime += time.Since(startEncoding).Seconds()
+	p.vectorEncodingTime += time.Since(startEncoding).Seconds()
 	if err != nil {
 		log.Fatalf("failed to encode B proximity fold for %s: %v", spec.name, err)
 	}
@@ -1429,7 +1481,6 @@ func (p *preparedLayer) merkleProofSize() int {
 		size += crypto.MerkleMultiProofSizeBytes(p.sampleGroups[groupID].multiProof)
 	}
 	size += crypto.MerkleMultiProofSizeBytes(p.scalarMultiProof)
-	size += p.openedMerkleCommitmentCount() * crypto.G1AffineSizeBytes
 	return size
 }
 

@@ -1,9 +1,9 @@
 package main
 
 import (
-	"bytes"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"math"
 	"path/filepath"
@@ -75,8 +75,15 @@ func main() {
 		log.Fatalf("failed to create output directory: %v", err)
 	}
 	csvPath := filepath.Join(outputDir, "lamp_batch_benchmark_results.csv")
-	file, writer := benchmark.InitLAMPBATCHCSV(csvPath)
-	defer file.Close()
+	writer, err := benchmark.InitLAMPBATCHCSV(csvPath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer func() {
+		if err := writer.Close(); err != nil {
+			log.Fatal(err)
+		}
+	}()
 
 	runLogKFrom, runLogKTo := *logKFlag, *logKFlag
 	if *allFlag {
@@ -103,12 +110,16 @@ func main() {
 		for logK := runLogKFrom; logK <= runLogKTo; logK++ {
 			for batch := runBatchFrom; batch <= runBatchTo; batch++ {
 				res := runExperiment(logK, *rhoFlag, *LFlag, batch, onlyCompile, *matrixSourceFlag, *matrixDirFlag)
-				benchmark.AppendLAMPBATCHResultToCSV(writer, res)
+				if err := benchmark.AppendLAMPBATCHResultToCSV(writer, res); err != nil {
+					log.Fatal(err)
+				}
 			}
 		}
 	} else {
 		res := runExperiment(*logKFlag, *rhoFlag, *LFlag, *batchFlag, onlyCompile, *matrixSourceFlag, *matrixDirFlag)
-		benchmark.AppendLAMPBATCHResultToCSV(writer, res)
+		if err := benchmark.AppendLAMPBATCHResultToCSV(writer, res); err != nil {
+			log.Fatal(err)
+		}
 	}
 	fmt.Println("🎉 All LAMPBATCH tasks finished!")
 }
@@ -167,11 +178,13 @@ func runExperiment(logK int, rhoStr string, L int, batch int, onlyCompile bool, 
 	var circuitSetupTime float64
 	var cpLinkSetupTime float64
 
+	setupSampler := benchmark.StartMemory()
 	startProtocolSetup := time.Now()
 	ckABC := crypto.SetupCommitKey(3 * batch * K)
 	ckXYZ := crypto.SetupCommitKey(batch + 2)
 	encoder := crypto.NewEncoder(K, N)
 	protocolSetupTime += time.Since(startProtocolSetup).Seconds()
+	setupMemory := setupSampler.Stop()
 
 	input, err := matrix.Prepare(K, matrixSource, matrixDir)
 	if err != nil {
@@ -186,16 +199,24 @@ func runExperiment(logK int, rhoStr string, L int, batch int, onlyCompile bool, 
 		products[i].A, products[i].B, products[i].C = input.A, input.B, input.C
 	}
 
+	commitSampler := benchmark.StartMemory()
 	startMatCommit := time.Now()
 	startMatrixEncoding := time.Now()
 	encodeBatchProducts(products, encoder)
-	matrixEncodingTime := time.Since(startMatrixEncoding).Seconds()
 	abcBlocks := buildABCBlocks(products, N, K)
+	matrixEncodingTime := time.Since(startMatrixEncoding).Seconds()
+	startPedersen := time.Now()
 	leavesABC, blABC := crypto.BatchPedersenCommitBlinded(abcBlocks, ckABC)
+	pedersenCommitTime := time.Since(startPedersen).Seconds()
+	startMerkleCommit := time.Now()
 	treeABC, rootABC := crypto.BuildMerkleTreeFromGroupElements(leavesABC, depth)
+	merkleCommitTime := time.Since(startMerkleCommit).Seconds()
 
-	matCommitTime := time.Since(startMatCommit).Seconds()
+	commitOtherTime := time.Since(startMatCommit).Seconds() - matrixEncodingTime - pedersenCommitTime - merkleCommitTime
+	matCommitTime := matrixEncodingTime + pedersenCommitTime + merkleCommitTime
+	commitMemory := commitSampler.Stop()
 
+	proveSampler := benchmark.StartMemory()
 	startVecCompute := time.Now()
 	cmABC := crypto.HashElementsMiMC(rootABC)
 	challengeR := deriveLAMPBATCHChallenge(cmABC, labelChallengeR)
@@ -205,14 +226,11 @@ func runExperiment(logK int, rhoStr string, L int, batch int, onlyCompile bool, 
 	bPowers := matrix.Powers(challengeB, K)
 	gammaPowers := matrix.Powers(gamma, batch)
 
-	vectorEncodingTime := 0.0
 	vecW := make([]fr.Element, K)
 	vecBTest := make([]fr.Element, K)
 	for i := range products {
 		products[i].VecX = matrix.VecMatMul(rPowers, products[i].A, K)
-		startEncoding := time.Now()
 		_, encX, err := encoder.Encode(products[i].VecX)
-		vectorEncodingTime += time.Since(startEncoding).Seconds()
 		if err != nil {
 			log.Fatalf("❌ Failed to encode VecX for batch item %d: %v", i, err)
 		}
@@ -224,15 +242,11 @@ func runExperiment(logK int, rhoStr string, L int, batch int, onlyCompile bool, 
 		biTest := matrix.VecMatMul(bPowers, products[i].B, K)
 		addScaledVector(vecBTest, biTest, gammaPowers[i])
 	}
-	startEncoding := time.Now()
 	_, encW, err := encoder.Encode(vecW)
-	vectorEncodingTime += time.Since(startEncoding).Seconds()
 	if err != nil {
 		log.Fatalf("❌ Failed to encode batch output vector: %v", err)
 	}
-	startEncoding = time.Now()
 	_, encBTest, err := encoder.Encode(vecBTest)
-	vectorEncodingTime += time.Since(startEncoding).Seconds()
 	if err != nil {
 		log.Fatalf("❌ Failed to encode batch B proximity vector: %v", err)
 	}
@@ -251,20 +265,24 @@ func runExperiment(logK int, rhoStr string, L int, batch int, onlyCompile bool, 
 		log.Fatalf("❌ Failed to sample query indices: %v", err)
 	}
 	vectorComputeTime += time.Since(startQueries).Seconds()
-	encodingTime := matrixEncodingTime + vectorEncodingTime // Diagnostic; already in the phase timers.
+	encodingTime := matrixEncodingTime // ABC encoding, already included in abc_commit_time.
 	commitTime := matCommitTime + vecCommitTime
 	totalCommitTime := commitTime + vectorComputeTime
 
 	fmt.Println("=== Circuit Setup & Prove ===")
+	proveMemory := proveSampler.Stop()
+	setupSampler = benchmark.StartMemory()
 	startDomainSetup := time.Now()
 	rootsK, weightsK, rootsN, weightsN := buildDomains(K, N)
 	protocolSetupTime += time.Since(startDomainSetup).Seconds()
 
 	emptyCircuit := newLAMPBATCHCircuit(K, N, batch, L, rootsK, weightsK, rootsN, weightsN)
+	startCompile := time.Now()
 	r1csSystem, err := frontend.Compile(field, r1cs.NewBuilder, emptyCircuit)
 	if err != nil {
 		log.Fatalf("❌ Compilation failed: %v", err)
 	}
+	circuitSetupTime += time.Since(startCompile).Seconds()
 	nbConstraints := r1csSystem.GetNbConstraints()
 
 	startSetup := time.Now()
@@ -273,6 +291,7 @@ func runExperiment(logK int, rhoStr string, L int, batch int, onlyCompile bool, 
 		log.Fatalf("❌ Groth16 setup failed: %v", err)
 	}
 	circuitSetupTime += time.Since(startSetup).Seconds()
+	setupMemory = setupMemory.Merge(setupSampler.Stop())
 
 	assignment := newLAMPBATCHCircuit(K, N, batch, L, rootsK, weightsK, rootsN, weightsN)
 	assignment.RootABC = rootABC
@@ -285,6 +304,7 @@ func runExperiment(logK int, rhoStr string, L int, batch int, onlyCompile bool, 
 
 	fillLAMPBATCHAssignment(assignment, products, vecW, encW, vecBTest, encBTest, abcBlocks, xyzBlocks, indices, K, N)
 
+	setupSampler = benchmark.StartMemory()
 	startProtocolBindSetup := time.Now()
 	proverWithPK := protocol.NewProver(pk, ckABC, encoder)
 	verifier := protocol.NewVerifier(vk, ckABC, proverWithPK.CK2)
@@ -314,6 +334,8 @@ func runExperiment(logK int, rhoStr string, L int, batch int, onlyCompile bool, 
 	}
 	cpLinkSetupTime += time.Since(startCPLinkSetup).Seconds()
 	setupTime := protocolSetupTime + circuitSetupTime + cpLinkSetupTime
+	setupMemory = setupMemory.Merge(setupSampler.Stop())
+	proveSampler = benchmark.StartMemory()
 
 	fmt.Println("=== 3. Generating Proof ===")
 	proofWitness, err := frontend.NewWitness(assignment, field)
@@ -365,6 +387,7 @@ func runExperiment(logK int, rhoStr string, L int, batch int, onlyCompile bool, 
 		log.Fatalf("❌ Scalar QA-link proof failed: %v", err)
 	}
 	cpLinkProveTime := time.Since(startCPLinkProve).Seconds()
+	proveMemory = proveMemory.Merge(proveSampler.Stop())
 
 	publicWitness, err := proofWitness.Public()
 	if err != nil {
@@ -422,57 +445,67 @@ func runExperiment(logK int, rhoStr string, L int, batch int, onlyCompile bool, 
 	fmt.Printf("   Total Prove Time: %s; Commit and Prove Time: %s\n",
 		benchmark.FormatDurationSeconds(totalProveTime), benchmark.FormatDurationSeconds(commitAndProveTime))
 
-	var buf bytes.Buffer
-	circuitProof.WriteTo(&buf)
-	groth16ProofSize := buf.Len()
+	snarkBytes, err := circuitProof.WriteTo(io.Discard)
+	if err != nil {
+		log.Fatalf("measure SNARK proof: %v", err)
+	}
+	groth16ProofSize := int(snarkBytes)
 
 	merkleProofSize := crypto.MerkleMultiProofSizeBytes(mmpABC) +
-		crypto.MerkleMultiProofSizeBytes(mmpXYZ) +
-		L*2*crypto.G1AffineSizeBytes
+		crypto.MerkleMultiProofSizeBytes(mmpXYZ)
+	queryCommitmentsSize := L * 2 * crypto.G1AffineSizeBytes
 
 	cpLinkProofSize := crypto.QALinkProofSizeBytes(columnLinkProof) + crypto.QALinkProofSizeBytes(scalarLinkProof)
-	totalProofSize := groth16ProofSize + merkleProofSize + cpLinkProofSize
+	totalProofSize := groth16ProofSize + merkleProofSize + cpLinkProofSize + queryCommitmentsSize
 
-	fmt.Printf("📊 Proof Sizes -> Groth16: %d B, Merkle: %d B, CPLink: %d B | Total: %d B\n",
-		groth16ProofSize, merkleProofSize, cpLinkProofSize, totalProofSize)
+	fmt.Printf("📊 Proof Sizes -> Groth16: %d B, Merkle: %d B, CPLink: %d B, Query commitments: %d B | Total: %d B\n",
+		groth16ProofSize, merkleProofSize, cpLinkProofSize, queryCommitmentsSize, totalProofSize)
 
 	return benchmark.LAMPBATCHResult{
-		LogK:               logK,
-		Rho:                rhoStr,
-		Linker:             linkerQALink,
-		Merkle:             merkle,
-		Batch:              batch,
-		N:                  N,
-		NumQueries:         L,
-		Constraints:        nbConstraints,
-		MatrixComputeTime:  matrixComputeTime,
-		MatrixSource:       input.Source,
-		MatrixPath:         input.Path,
-		MatrixLoadTime:     input.Load.Seconds(),
-		SetupTime:          setupTime,
-		ProtocolSetupTime:  protocolSetupTime,
-		CircuitSetupTime:   circuitSetupTime,
-		CPLinkSetupTime:    cpLinkSetupTime,
-		MatrixCommitTime:   matCommitTime,
-		VectorCommitTime:   vecCommitTime,
-		VectorComputeTime:  vectorComputeTime,
-		EncodingTime:       encodingTime,
-		CommitTime:         commitTime,
-		TotalCommitTime:    totalCommitTime,
-		MerkleProveTime:    merkleProveTime,
-		CircuitProveTime:   circuitProveTime,
-		CPLinkProveTime:    cpLinkProveTime,
-		TotalProveTime:     totalProveTime,
-		CommitAndProveTime: commitAndProveTime,
-		CircuitVerifyTime:  circuitVerifyTime,
-		MerkleVerifyTime:   merkleVerifyTime,
-		CPLinkVerifyTime:   cpLinkVerifyTime,
-		TotalVerifyTime:    totalVerifyTime,
-		MerkleProofSize:    merkleProofSize,
-		Groth16ProofSize:   groth16ProofSize,
-		CPLinkProofSize:    cpLinkProofSize,
-		TotalProofSize:     totalProofSize,
-		PeakMemoryBytes:    benchmark.PeakRSSBytes(),
+		LogK:                 logK,
+		Rho:                  rhoStr,
+		Linker:               linkerQALink,
+		Merkle:               merkle,
+		Batch:                batch,
+		N:                    N,
+		NumQueries:           L,
+		Constraints:          nbConstraints,
+		MatrixComputeTime:    matrixComputeTime,
+		MatrixSource:         input.Source,
+		MatrixPath:           input.Path,
+		MatrixLoadTime:       input.Load.Seconds(),
+		SetupTime:            setupTime,
+		ProtocolSetupTime:    protocolSetupTime,
+		CircuitSetupTime:     circuitSetupTime,
+		CPLinkSetupTime:      cpLinkSetupTime,
+		MatrixCommitTime:     matCommitTime,
+		PedersenCommitTime:   pedersenCommitTime,
+		MerkleCommitTime:     merkleCommitTime,
+		CommitOtherTime:      commitOtherTime,
+		MatrixWorkers:        input.Workers,
+		SetupMemory:          setupMemory,
+		CommitMemory:         commitMemory,
+		ProveMemory:          proveMemory,
+		VectorCommitTime:     vecCommitTime,
+		VectorComputeTime:    vectorComputeTime,
+		EncodingTime:         encodingTime,
+		CommitTime:           commitTime,
+		TotalCommitTime:      totalCommitTime,
+		MerkleProveTime:      merkleProveTime,
+		CircuitProveTime:     circuitProveTime,
+		CPLinkProveTime:      cpLinkProveTime,
+		TotalProveTime:       totalProveTime,
+		CommitAndProveTime:   commitAndProveTime,
+		CircuitVerifyTime:    circuitVerifyTime,
+		MerkleVerifyTime:     merkleVerifyTime,
+		CPLinkVerifyTime:     cpLinkVerifyTime,
+		TotalVerifyTime:      totalVerifyTime,
+		MerkleProofSize:      merkleProofSize,
+		Groth16ProofSize:     groth16ProofSize,
+		CPLinkProofSize:      cpLinkProofSize,
+		TotalProofSize:       totalProofSize,
+		QueryCommitmentsSize: queryCommitmentsSize,
+		PeakMemoryBytes:      benchmark.PeakRSSBytes(),
 	}
 }
 
