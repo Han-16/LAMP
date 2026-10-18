@@ -1,11 +1,12 @@
 package main
 
 import (
-	"bytes"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	"example.com/lamp/benchmark"
@@ -86,15 +87,22 @@ func main() {
 	toFlag := flag.Int("to", config.GetInt("FREIVALDS_GPT2_SEQ_TO", 4), "Last log2 sequence length when range mode is enabled")
 	compileFlag := flag.Bool("compile", config.GetBool("FREIVALDS_GPT2_ONLY_COMPILE", false), "Only compile the circuit to get constraints")
 	onlyCompileFlag := flag.Bool("OnlyCompile", config.GetBool("FREIVALDS_GPT2_ONLY_COMPILE", false), "Alias for -compile")
+	repeatFlag := flag.Int("repeat", config.GetInt("FREIVALDS_GPT2_REPEAT", 1), "Measurements per configuration (minimum 1)")
 	flag.Parse()
+	if *repeatFlag < 1 {
+		log.Fatalf("repeat must be positive, got %d", *repeatFlag)
+	}
 
 	outputDir := config.OutputDir("FREIVALDS_GPT2_OUTPUT_DIR", filepath.Join("benchmark", "freivalds_gpt2"))
 	if err := benchmark.EnsureDir(outputDir); err != nil {
 		log.Fatalf("failed to create output directory: %v", err)
 	}
 	csvPath := filepath.Join(outputDir, "freivalds_gpt2_benchmark_results.csv")
-	file, writer := benchmark.InitFreivaldsGPT2CSV(csvPath)
-	defer file.Close()
+	writer, err := benchmark.InitFreivaldsGPT2CSV(csvPath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer writer.Close()
 
 	onlyCompile := *compileFlag || *onlyCompileFlag
 	if *allFlag || *rangeFlag {
@@ -103,18 +111,54 @@ func main() {
 		}
 		fmt.Printf("Running Freivalds GPT-2 range: seq=%d..%d\n", *fromFlag, *toFlag)
 		for seqLog := *fromFlag; seqLog <= *toFlag; seqLog++ {
-			res := runExperiment(seqLog, onlyCompile)
-			benchmark.AppendFreivaldsGPT2ResultToCSV(writer, res)
+			if err := runRepeatedExperiments(seqLog, onlyCompile, *repeatFlag, writer); err != nil {
+				log.Fatal(err)
+			}
 			fmt.Println("----------------------------------------------------------------")
 		}
-		return
+	} else {
+		if err := runRepeatedExperiments(*seqFlag, onlyCompile, *repeatFlag, writer); err != nil {
+			log.Fatal(err)
+		}
 	}
-
-	res := runExperiment(*seqFlag, onlyCompile)
-	benchmark.AppendFreivaldsGPT2ResultToCSV(writer, res)
+	if err := writer.SaveAverages(); err != nil {
+		log.Fatal(err)
+	}
 }
 
-func runExperiment(seqLog int, onlyCompile bool) benchmark.FreivaldsGPT2Result {
+type layerInput struct {
+	graph       graphSpec
+	computeTime float64
+}
+
+func prepareLayerInput(seqLog int, onlyCompile bool) layerInput {
+	if seqLog < 0 {
+		log.Fatalf("invalid seq=%d", seqLog)
+	}
+	if onlyCompile {
+		return layerInput{graph: buildGPT2MediumShapes(1 << seqLog)}
+	}
+	graph, computeTime := buildGPT2MediumData(1 << seqLog)
+	return layerInput{graph: graph, computeTime: computeTime}
+}
+
+func runRepeatedExperiments(seqLog int, onlyCompile bool, repeats int, writer *benchmark.FreivaldsCSV) error {
+	if repeats < 1 {
+		return fmt.Errorf("repeat must be positive")
+	}
+	input := prepareLayerInput(seqLog, onlyCompile)
+	for repeat := 1; repeat <= repeats; repeat++ {
+		runtime.GC()
+		res := runExperimentWithInput(seqLog, onlyCompile, input)
+		res.Repeat = repeat
+		if err := benchmark.AppendFreivaldsGPT2ResultToCSV(writer, res); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func runExperimentWithInput(seqLog int, onlyCompile bool, input layerInput) benchmark.FreivaldsGPT2Result {
 	if seqLog < 0 {
 		log.Fatalf("invalid seq=%d", seqLog)
 	}
@@ -123,7 +167,7 @@ func runExperiment(seqLog int, onlyCompile bool) benchmark.FreivaldsGPT2Result {
 	fmt.Printf("Freivalds GPT-2 medium packed-QKV layer: seq=2^%d=%d\n", seqLog, seqLen)
 
 	if onlyCompile {
-		graph := buildGPT2MediumShapes(seqLen)
+		graph := input.graph
 		emptyCircuit := buildCircuit(graph, false)
 
 		r1csSystem, err := frontend.Compile(field, r1cs.NewBuilder, emptyCircuit)
@@ -134,15 +178,15 @@ func runExperiment(seqLog int, onlyCompile bool) benchmark.FreivaldsGPT2Result {
 		fmt.Printf("Freivalds GPT-2 circuit compiled. Constraints: %d\n", nbConstraints)
 
 		return benchmark.FreivaldsGPT2Result{
-			SeqLog:          seqLog,
-			SeqLen:          seqLen,
-			NumClaims:       len(graph.claims),
-			Constraints:     nbConstraints,
-			PeakMemoryBytes: benchmark.PeakRSSBytes(),
+			SeqLog:       seqLog,
+			SeqLen:       seqLen,
+			NumClaims:    len(graph.claims),
+			MatrixSource: "compile",
+			Constraints:  nbConstraints,
 		}
 	}
 
-	graph, matrixComputeTime := buildGPT2MediumData(seqLen)
+	graph, matrixComputeTime := input.graph, input.computeTime
 	fmt.Printf("   ✅ Matrix Compute Time: %.2f s\n", matrixComputeTime)
 
 	emptyCircuit := buildCircuit(graph, false)
@@ -150,14 +194,17 @@ func runExperiment(seqLog int, onlyCompile bool) benchmark.FreivaldsGPT2Result {
 	if err != nil {
 		log.Fatalf("Freivalds GPT-2 compilation failed: %v", err)
 	}
+	setupSampler := benchmark.StartMemory()
 	startSetup := time.Now()
 	pk, vk, err := groth16.Setup(r1csSystem)
 	if err != nil {
 		log.Fatalf("Freivalds GPT-2 setup failed: %v", err)
 	}
 	setupTime := time.Since(startSetup).Seconds()
+	setupMemory := setupSampler.Stop()
 	nbConstraints := r1csSystem.GetNbConstraints()
 
+	proveSampler := benchmark.StartMemory()
 	assignment := buildCircuit(graph, true)
 
 	witness, err := frontend.NewWitness(assignment, field)
@@ -170,12 +217,13 @@ func runExperiment(seqLog int, onlyCompile bool) benchmark.FreivaldsGPT2Result {
 		log.Fatalf("Freivalds GPT-2 proof failed: %v", err)
 	}
 	proveTime := time.Since(startProve).Seconds()
+	proveMemory := proveSampler.Stop()
 
-	var proofBuf bytes.Buffer
-	if _, err := proof.WriteTo(&proofBuf); err != nil {
+	proofBytes, err := proof.WriteTo(io.Discard)
+	if err != nil {
 		log.Fatalf("Freivalds GPT-2 proof serialization failed: %v", err)
 	}
-	proofSize := proofBuf.Len()
+	proofSize := int(proofBytes)
 	fmt.Printf("Freivalds GPT-2 proof size: %d B\n", proofSize)
 
 	publicWitness, err := witness.Public()
@@ -196,11 +244,13 @@ func runExperiment(seqLog int, onlyCompile bool) benchmark.FreivaldsGPT2Result {
 		NumClaims:         len(graph.claims),
 		Constraints:       nbConstraints,
 		MatrixComputeTime: matrixComputeTime,
+		MatrixSource:      "generate",
+		SetupMemory:       setupMemory,
+		ProveMemory:       proveMemory,
 		SetupTime:         setupTime,
 		ProveTime:         proveTime,
 		VerifyTime:        verifyTime,
 		ProofSize:         proofSize,
-		PeakMemoryBytes:   benchmark.PeakRSSBytes(),
 	}
 }
 

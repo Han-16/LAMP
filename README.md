@@ -119,8 +119,8 @@ implementations. GPT-2 experiments retain their existing input-generation flow.
 
 Range scripts run one configuration per fresh container, sequentially. No CPU
 or memory limit is applied, so each benchmark process can use all resources
-available to Docker. LAMP records stage-specific sampled RSS peaks in a
-companion memory CSV. Freivalds retains its process-wide `PeakMemory(B)` value.
+available to Docker. All six targets record stage-specific sampled RSS peaks
+in a companion memory CSV.
 
 
 ## Running Benchmarks
@@ -193,9 +193,10 @@ sh scripts/run_gpt2_bench.sh all
 Set the range bounds and batch-size ranges in `.env` before running these
 commands.
 
-LAMP, LAMP batch, and LAMP GPT-2 accept `-repeat` (default 1, minimum 1).
-The environment defaults are `LAMP_REPEAT`, `LAMP_BATCH_REPEAT`, and
-`LAMP_GPT2_REPEAT`. For example:
+All six LAMP and Freivalds targets accept `-repeat` (default 1, minimum 1).
+The environment defaults are `LAMP_REPEAT`, `LAMP_BATCH_REPEAT`,
+`LAMP_GPT2_REPEAT`, `FREIVALDS_REPEAT`, `FREIVALDS_BATCH_REPEAT`, and
+`FREIVALDS_GPT2_REPEAT`. For example:
 
 ```sh
 # Three complete measurements per k; two k values produce six individual rows.
@@ -205,7 +206,12 @@ go run ./cmd/lamp -all -from 7 -to 8 -repeat 3 -matrix-source file
 go run ./cmd/lamp_batch -K 7 -batch 5 -repeat 3
 go run ./cmd/lamp_gpt2 -seq 0 -repeat 3
 
-# Docker wrappers forward --repeat to the LAMP targets.
+# Freivalds uses the same repetitions and four output files.
+go run ./cmd/freivalds -all -from 7 -to 8 -repeat 3
+go run ./cmd/freivalds_batch -K 7 -batch 5 -repeat 3
+go run ./cmd/freivalds_gpt2 -seq 0 -repeat 3
+
+# Docker wrappers forward --repeat to all targets, including all mode.
 sh scripts/run_bench.sh lamp --range --repeat 3
 sh scripts/run_gpt2_bench.sh lamp --repeat 3
 ```
@@ -231,7 +237,7 @@ under a new `run_id`, without mixing previous invocations. An interrupted or
 failed command preserves completed individual rows and produces no summary for
 that invocation. Docker range wrappers invoke one command per configuration,
 so each successful configuration appends its own summary. The repeat option
-applies to the three LAMP targets; Freivalds targets retain their existing flow.
+applies to all six targets.
 
 ## Output
 
@@ -344,3 +350,30 @@ be converted to the new timing and size conventions by renaming headers.
 Each CSV output directory also contains `system_info.json`, which records the
 CPU model, logical core count, RAM, OS, architecture, Go version, and timestamp
 for the benchmark run.
+
+### Freivalds CSVs
+
+Freivalds, Freivalds batch and Freivalds GPT-2 use the same performance header
+as LAMP, with `_info.csv`, `_memory.csv`, and `_average.csv` companions.
+Input source/path/workers and input computation/loading times live in info.
+Batch adds `batch`; GPT-2 adds `seq_log`, `seq_len`, and `num_claims` there.
+Their averages use the same raw-value arithmetic, grouping, append validation,
+and success-only summary behavior as LAMP.
+
+Freivalds has no external commitment, Merkle or CP-Link phases. Their timing
+cells, as well as `commit_mode`, `rho`, `samples`, `linker`, `merkle`, and `n`,
+are empty. The corresponding proof components are zero bytes; `snark_proof_bytes`
+and `total_proof_bytes` both count the compressed Groth16 `WriteTo` serialization.
+`circuit_setup_time` and `total_setup_time` count only Groth16 setup, excluding
+compilation. `commit_and_prove_time` equals `total_prove_time`.
+
+The memory CSV uses `peak_setup`, `peak_commit`, `peak_prove`, and `peak`.
+Setup RSS covers Groth16 setup; prove RSS covers witness assignment, witness
+construction and proof generation. `peak_commit` is empty because that phase
+does not exist; `peak` equals `peak_prove`. Each average uses the mean of the
+individual RSS peaks. RSS currently requires Linux (including Docker); unavailable
+measurements stay empty, with no heap or process-lifetime peak fallback.
+Compile-only mode leaves all timing and RSS cells empty and counts constraints.
+
+The previous single-file Freivalds schema cannot be appended to this format.
+Choose a new output directory when retaining earlier results.

@@ -146,7 +146,7 @@ docker build -t "$image" .
 env_args="--env-file .env"
 for key in \
 	LAMP_GPT2_REPEAT LAMP_GPT2_SEQ LAMP_GPT2_RHO LAMP_GPT2_L LAMP_GPT2_ALL LAMP_GPT2_SEQ_FROM LAMP_GPT2_SEQ_TO LAMP_GPT2_ONLY_COMPILE LAMP_GPT2_OUTPUT_DIR \
-	FREIVALDS_GPT2_SEQ FREIVALDS_GPT2_ALL FREIVALDS_GPT2_SEQ_FROM FREIVALDS_GPT2_SEQ_TO FREIVALDS_GPT2_ONLY_COMPILE FREIVALDS_GPT2_OUTPUT_DIR
+	FREIVALDS_GPT2_REPEAT FREIVALDS_GPT2_SEQ FREIVALDS_GPT2_ALL FREIVALDS_GPT2_SEQ_FROM FREIVALDS_GPT2_SEQ_TO FREIVALDS_GPT2_ONLY_COMPILE FREIVALDS_GPT2_OUTPUT_DIR
 do
 	value="$(eval "printf '%s' \"\${$key:-}\"")"
 	if [ -n "$value" ]; then
@@ -158,11 +158,7 @@ run_process() {
 	protocol="$1"
 	append_results="$2"
 	shift 2
-	case "$protocol" in
-		lamp|lamp_batch|lamp_gpt2)
-			if [ -n "$repeat_override" ]; then set -- "$@" --repeat "$repeat_override"; fi
-			;;
-	esac
+	if [ -n "$repeat_override" ]; then set -- "$@" --repeat "$repeat_override"; fi
 	# Calls are intentionally sequential and unconstrained so this one
 	# benchmark process can use all resources available to Docker.
 	# shellcheck disable=SC2086

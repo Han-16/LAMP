@@ -1,12 +1,8 @@
 package benchmark
 
 import (
-	"encoding/csv"
 	"fmt"
-	"log"
 	"os"
-	"slices"
-	"strconv"
 )
 
 func EnsureDir(dir string) error {
@@ -17,56 +13,6 @@ func EnsureDir(dir string) error {
 	return err
 }
 
-func initCSV(filename string, header []string) (*os.File, *csv.Writer) {
-	flags := os.O_CREATE | os.O_WRONLY | os.O_TRUNC
-	writeHeader := true
-	appendResults, _ := strconv.ParseBool(os.Getenv("BENCHMARK_APPEND_CSV"))
-	if appendResults {
-		flags = os.O_CREATE | os.O_WRONLY | os.O_APPEND
-		if info, err := os.Stat(filename); err == nil && info.Size() > 0 {
-			existing, err := os.Open(filename)
-			if err != nil {
-				log.Fatalf("Failed to read CSV header: %v", err)
-			}
-			previousHeader, readErr := csv.NewReader(existing).Read()
-			existing.Close()
-			if readErr != nil || !slices.Equal(previousHeader, header) {
-				log.Fatalf("CSV header mismatch in %s; choose a new output directory", filename)
-			}
-			writeHeader = false
-		}
-	}
-
-	file, err := os.OpenFile(filename, flags, 0666)
-	if err != nil {
-		log.Fatalf("Failed to create CSV file: %v", err)
-	}
-	writeSystemInfoForCSV(filename)
-
-	writer := csv.NewWriter(file)
-	if writeHeader {
-		if err := writer.Write(header); err != nil {
-			log.Fatalf("Failed to write CSV header: %v", err)
-		}
-		writer.Flush()
-	}
-
-	return file, writer
-}
-
-func appendCSV(writer *csv.Writer, record []string, successLog string) {
-	if err := writer.Write(record); err != nil {
-		log.Printf("⚠️ Failed to write result record to CSV: %v", err)
-	}
-	writer.Flush()
-
-	if err := writer.Error(); err != nil {
-		log.Printf("⚠️ Error flushing csv writer: %v", err)
-	} else {
-		fmt.Printf("💾 Result saved to CSV: %s\n\n\n", successLog)
-	}
-}
-
 type FreivaldsResult struct {
 	LogK              int
 	MatrixComputeTime float64
@@ -75,10 +21,13 @@ type FreivaldsResult struct {
 	ProveTime         float64
 	VerifyTime        float64
 	ProofSize         int
-	PeakMemoryBytes   uint64
 	MatrixSource      string
 	MatrixPath        string
 	MatrixLoadTime    float64
+	Repeat            int
+	MatrixWorkers     int
+	SetupMemory       Memory
+	ProveMemory       Memory
 }
 
 type FreivaldsBatchResult struct {
@@ -90,10 +39,13 @@ type FreivaldsBatchResult struct {
 	ProveTime         float64
 	VerifyTime        float64
 	ProofSize         int
-	PeakMemoryBytes   uint64
 	MatrixSource      string
 	MatrixPath        string
 	MatrixLoadTime    float64
+	Repeat            int
+	MatrixWorkers     int
+	SetupMemory       Memory
+	ProveMemory       Memory
 }
 
 type LAMPResult struct {
@@ -249,78 +201,13 @@ type FreivaldsGPT2Result struct {
 	ProveTime         float64
 	VerifyTime        float64
 	ProofSize         int
-	PeakMemoryBytes   uint64
-}
-
-// --- Freivalds Benchmark ---
-func InitFreivaldsCSV(filename string) (*os.File, *csv.Writer) {
-	return initCSV(filename, []string{
-		"log(K)", "Constraint", "MatrixComputeTime (s/ms)", "Setup (s/ms)", "Prove (s/ms)", "Verify (s/ms)", "ProofSize(B)", "PeakMemory(B)", "MatrixSource", "MatrixPath", "MatrixLoadTime(s/ms)",
-	})
-}
-
-func AppendFreivaldsResultToCSV(writer *csv.Writer, res FreivaldsResult) {
-	record := []string{
-		strconv.Itoa(res.LogK),
-		strconv.Itoa(res.Constraints),
-		formatSeconds(res.MatrixComputeTime),
-		formatSeconds(res.SetupTime),
-		formatSeconds(res.ProveTime),
-		formatSeconds(res.VerifyTime),
-		strconv.Itoa(res.ProofSize),
-		strconv.FormatUint(res.PeakMemoryBytes, 10),
-		res.MatrixSource,
-		res.MatrixPath,
-		formatSeconds(res.MatrixLoadTime),
-	}
-	appendCSV(writer, record, fmt.Sprintf("logK=%d", res.LogK))
-}
-
-func InitFreivaldsBatchCSV(filename string) (*os.File, *csv.Writer) {
-	return initCSV(filename, []string{
-		"log(K)", "Batch", "Constraint", "MatrixComputeTime (s/ms)", "Setup (s/ms)", "Prove (s/ms)", "Verify (s/ms)", "ProofSize(B)", "PeakMemory(B)", "MatrixSource", "MatrixPath", "MatrixLoadTime(s/ms)",
-	})
-}
-
-func AppendFreivaldsBatchResultToCSV(writer *csv.Writer, res FreivaldsBatchResult) {
-	record := []string{
-		strconv.Itoa(res.LogK),
-		strconv.Itoa(res.Batch),
-		strconv.Itoa(res.Constraints),
-		formatSeconds(res.MatrixComputeTime),
-		formatSeconds(res.SetupTime),
-		formatSeconds(res.ProveTime),
-		formatSeconds(res.VerifyTime),
-		strconv.Itoa(res.ProofSize),
-		strconv.FormatUint(res.PeakMemoryBytes, 10),
-		res.MatrixSource,
-		res.MatrixPath,
-		formatSeconds(res.MatrixLoadTime),
-	}
-	appendCSV(writer, record, fmt.Sprintf("Freivalds batch: logK=%d, batch=%d, constraints=%d", res.LogK, res.Batch, res.Constraints))
-}
-
-func InitFreivaldsGPT2CSV(filename string) (*os.File, *csv.Writer) {
-	return initCSV(filename, []string{
-		"SeqLog", "SeqLen", "NumClaims", "Constraints",
-		"MatrixComputeTime(s/ms)", "SetupTime(s/ms)", "ProveTime(s/ms)", "VerifyTime(s/ms)", "ProofSize(B)", "PeakMemory(B)",
-	})
-}
-
-func AppendFreivaldsGPT2ResultToCSV(writer *csv.Writer, res FreivaldsGPT2Result) {
-	record := []string{
-		strconv.Itoa(res.SeqLog),
-		strconv.Itoa(res.SeqLen),
-		strconv.Itoa(res.NumClaims),
-		strconv.Itoa(res.Constraints),
-		formatSeconds(res.MatrixComputeTime),
-		formatSeconds(res.SetupTime),
-		formatSeconds(res.ProveTime),
-		formatSeconds(res.VerifyTime),
-		strconv.Itoa(res.ProofSize),
-		strconv.FormatUint(res.PeakMemoryBytes, 10),
-	}
-	appendCSV(writer, record, fmt.Sprintf("Freivalds GPT-2 medium layer: seq=2^%d, claims=%d, constraints=%d", res.SeqLog, res.NumClaims, res.Constraints))
+	Repeat            int
+	MatrixWorkers     int
+	SetupMemory       Memory
+	ProveMemory       Memory
+	MatrixSource      string
+	MatrixPath        string
+	MatrixLoadTime    float64
 }
 
 func formatSeconds(seconds float64) string {

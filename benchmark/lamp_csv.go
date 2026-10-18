@@ -44,6 +44,7 @@ type LAMPCSV struct {
 	files         []*os.File
 	writers       []*csv.Writer
 	gpt2          bool
+	freivalds     bool
 	runID         string
 	averagePath   string
 	averageHeader []string
@@ -66,6 +67,10 @@ func InitLAMPGPT2CSV(path string) (*LAMPCSV, error) {
 }
 
 func initLAMPCSV(path string, extraInfo []string, gpt2 bool) (*LAMPCSV, error) {
+	return initExperimentCSV(path, extraInfo, gpt2, false)
+}
+
+func initExperimentCSV(path string, extraInfo []string, gpt2, freivalds bool) (*LAMPCSV, error) {
 	stem := strings.TrimSuffix(path, filepath.Ext(path))
 	paths := []string{path, stem + "_info.csv", stem + "_memory.csv"}
 	headers := [][]string{lampCSVHeader, append(slices.Clone(lampInfoCSVHeader), extraInfo...), lampMemoryCSVHeader}
@@ -102,7 +107,7 @@ func initLAMPCSV(path string, extraInfo []string, gpt2 bool) (*LAMPCSV, error) {
 			return nil, err
 		}
 	}
-	set := &LAMPCSV{gpt2: gpt2, runID: time.Now().UTC().Format("20060102T150405.000000000Z"),
+	set := &LAMPCSV{gpt2: gpt2, freivalds: freivalds, runID: time.Now().UTC().Format("20060102T150405.000000000Z"),
 		averagePath: averagePath, averageHeader: averageHeader, appendResults: appendResults, groups: make(map[string]*lampAverageGroup)}
 	for i, filename := range paths {
 		flags := os.O_CREATE | os.O_WRONLY | os.O_TRUNC
@@ -202,7 +207,7 @@ func (res LAMPResult) memoryPeaks() [4]Memory {
 }
 
 func optionalSeconds(seconds float64) string {
-	// LED's separate verifier MSM phases do not exist in LAMP.
+	// NaN marks phases absent from the measured protocol.
 	if math.IsNaN(seconds) {
 		return ""
 	}
@@ -213,6 +218,9 @@ func (set *LAMPCSV) dimensions(res LAMPResult) (string, string) {
 	// Rectangular tensors have no single square K or N.
 	if set.gpt2 {
 		return "", ""
+	}
+	if set.freivalds {
+		return strconv.Itoa(res.LogK), ""
 	}
 	return strconv.Itoa(res.LogK), strconv.Itoa(res.N)
 }
@@ -225,8 +233,7 @@ func (set *LAMPCSV) append(res LAMPResult, extraInfo []string) error {
 		res.Repeat = 1
 	}
 	logk, n := set.dimensions(res)
-	// Encoded-column MSM commitments correspond to LED's legacy algorithm.
-	identity := []string{set.runID, strconv.Itoa(res.Repeat), "legacy", logk, res.Rho}
+	identity := []string{set.runID, strconv.Itoa(res.Repeat), set.commitMode(), logk, res.Rho}
 	record := append(slices.Clone(identity), strconv.Itoa(res.Constraints))
 	for _, value := range res.timings() {
 		record = append(record, optionalSeconds(value))
@@ -234,11 +241,11 @@ func (set *LAMPCSV) append(res LAMPResult, extraInfo []string) error {
 	for _, value := range res.proofSizes() {
 		record = append(record, strconv.Itoa(value))
 	}
-	info := append(slices.Clone(identity), strconv.Itoa(res.NumQueries), res.MatrixSource, res.MatrixPath,
+	info := append(slices.Clone(identity), set.samples(res), res.MatrixSource, res.MatrixPath,
 		strconv.Itoa(res.MatrixWorkers), formatSeconds(res.MatrixComputeTime), formatSeconds(res.MatrixLoadTime), res.Linker, res.Merkle, n)
 	info = append(info, extraInfo...)
 	memory := slices.Clone(identity)
-	for _, m := range res.memoryPeaks() {
+	for _, m := range set.memoryPeaks(res) {
 		cell := ""
 		if m.Measured && m.RSSAvailable {
 			cell = memorySize(m.RSSBytes)

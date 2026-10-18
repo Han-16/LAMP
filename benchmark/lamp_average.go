@@ -41,7 +41,7 @@ func (set *LAMPCSV) addAverage(res LAMPResult, extra []string) {
 	for i, value := range res.proofSizes() {
 		g.proofSizes[i] += float64(value)
 	}
-	for i, m := range res.memoryPeaks() {
+	for i, m := range set.memoryPeaks(res) {
 		g.memory[i] += float64(m.RSSBytes)
 		g.available[i] = g.available[i] && m.Measured && m.RSSAvailable
 	}
@@ -52,7 +52,7 @@ func (set *LAMPCSV) averageRecords() [][]string {
 	for _, g := range set.groupOrder {
 		r := g.first
 		logk, n := set.dimensions(r)
-		row := []string{set.runID, logk, r.Rho, strconv.Itoa(r.NumQueries), "legacy", strconv.Itoa(g.runs),
+		row := []string{set.runID, logk, r.Rho, set.samples(r), set.commitMode(), strconv.Itoa(g.runs),
 			strconv.Itoa(r.Constraints), r.MatrixSource, r.MatrixPath, strconv.Itoa(r.MatrixWorkers),
 			formatSeconds(r.MatrixComputeTime), formatSeconds(r.MatrixLoadTime)}
 		count := float64(g.runs)

@@ -36,7 +36,7 @@ class RepeatWrapperTests(unittest.TestCase):
             calls = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
             return result, calls
 
-    def test_repeat_forwarded_to_lamp_range_commands(self):
+    def test_repeat_forwarded_to_all_range_commands(self):
         for script in ('run_bench.sh', 'run_gpt2_bench.sh'):
             for flags in (['--repeat', '3'], ['--repeat=3']):
                 with self.subTest(script=script, flags=flags):
@@ -45,11 +45,7 @@ class RepeatWrapperTests(unittest.TestCase):
                     runs = [call for call in calls if call[0] == 'run']
                     self.assertEqual(len(runs), 8 if script == 'run_bench.sh' else 4)
                     for call in runs:
-                        program = next(arg for arg in call if arg.startswith('/usr/local/bin/'))
-                        if Path(program).name.startswith('lamp'):
-                            self.assertEqual(call[call.index('--repeat') + 1], '3')
-                        else:
-                            self.assertNotIn('--repeat', call)
+                        self.assertEqual(call[call.index('--repeat') + 1], '3')
 
     def test_rejects_invalid_repeat_before_docker(self):
         for script in ('run_bench.sh', 'run_gpt2_bench.sh'):
@@ -65,6 +61,9 @@ class RepeatWrapperTests(unittest.TestCase):
             ('run_bench.sh', 'lamp', 'LAMP_REPEAT'),
             ('run_bench.sh', 'lamp_batch', 'LAMP_BATCH_REPEAT'),
             ('run_gpt2_bench.sh', 'lamp', 'LAMP_GPT2_REPEAT'),
+            ('run_bench.sh', 'freivalds', 'FREIVALDS_REPEAT'),
+            ('run_bench.sh', 'freivalds_batch', 'FREIVALDS_BATCH_REPEAT'),
+            ('run_gpt2_bench.sh', 'freivalds', 'FREIVALDS_GPT2_REPEAT'),
         ):
             with self.subTest(key=key):
                 result, calls = self.invoke(script, [target], {key: '2'})

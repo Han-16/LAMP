@@ -1,11 +1,12 @@
 package main
 
 import (
-	"bytes"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	"example.com/lamp/benchmark"
@@ -41,7 +42,11 @@ func main() {
 	onlyCompileFlag := flag.Bool("OnlyCompile", config.GetBool("FREIVALDS_BATCH_ONLY_COMPILE", false), "Alias for -compile")
 	matrixSourceFlag := flag.String("matrix-source", config.GetString("LAMP_MATRIX_SOURCE", "auto"), "Matrix input: auto, file, or generate")
 	matrixDirFlag := flag.String("matrix-dir", config.OutputDir("LAMP_MATRIX_DIR", "matrices"), "Directory containing matrices_k<K>.bin")
+	repeatFlag := flag.Int("repeat", config.GetInt("FREIVALDS_BATCH_REPEAT", 1), "Measurements per configuration (minimum 1)")
 	flag.Parse()
+	if *repeatFlag < 1 {
+		log.Fatalf("repeat must be positive, got %d", *repeatFlag)
+	}
 
 	onlyCompile := *compileFlag || *onlyCompileFlag
 	outputDir := config.OutputDir("FREIVALDS_BATCH_OUTPUT_DIR", filepath.Join("benchmark", "freivalds_batch"))
@@ -50,8 +55,11 @@ func main() {
 	}
 
 	csvPath := filepath.Join(outputDir, "freivalds_batch_benchmark_results.csv")
-	file, writer := benchmark.InitFreivaldsBatchCSV(csvPath)
-	defer file.Close()
+	writer, err := benchmark.InitFreivaldsBatchCSV(csvPath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer writer.Close()
 
 	runLogKFrom, runLogKTo := *logKFlag, *logKFlag
 	if *allFlag {
@@ -77,19 +85,53 @@ func main() {
 		}
 		for logK := runLogKFrom; logK <= runLogKTo; logK++ {
 			for batch := runBatchFrom; batch <= runBatchTo; batch++ {
-				res := runExperiment(logK, batch, onlyCompile, *matrixSourceFlag, *matrixDirFlag)
-				benchmark.AppendFreivaldsBatchResultToCSV(writer, res)
+				if err := runRepeatedExperiments(logK, batch, onlyCompile, *matrixSourceFlag, *matrixDirFlag, *repeatFlag, writer); err != nil {
+					log.Fatal(err)
+				}
 			}
 		}
 	} else {
-		res := runExperiment(*logKFlag, *batchFlag, onlyCompile, *matrixSourceFlag, *matrixDirFlag)
-		benchmark.AppendFreivaldsBatchResultToCSV(writer, res)
+		if err := runRepeatedExperiments(*logKFlag, *batchFlag, onlyCompile, *matrixSourceFlag, *matrixDirFlag, *repeatFlag, writer); err != nil {
+			log.Fatal(err)
+		}
 	}
 
+	if err := writer.SaveAverages(); err != nil {
+		log.Fatal(err)
+	}
 	fmt.Println("🎉 All Freivalds batch benchmarks finished!")
 }
 
-func runExperiment(logK int, batch int, onlyCompile bool, matrixSource, matrixDir string) benchmark.FreivaldsBatchResult {
+func prepareInput(logK int, onlyCompile bool, source, dir string) (matrix.Input, error) {
+	if onlyCompile {
+		return matrix.Input{}, nil
+	}
+	return matrix.Prepare(1<<logK, source, dir)
+}
+
+func runRepeatedExperiments(logK int, batch int, onlyCompile bool, source, dir string, repeats int, writer *benchmark.FreivaldsCSV) error {
+	if repeats < 1 {
+		return fmt.Errorf("repeat must be positive")
+	}
+	if batch < 1 {
+		return fmt.Errorf("batch must be positive")
+	}
+	input, err := prepareInput(logK, onlyCompile, source, dir)
+	if err != nil {
+		return err
+	}
+	for repeat := 1; repeat <= repeats; repeat++ {
+		runtime.GC()
+		res := runExperimentWithInput(logK, batch, onlyCompile, input)
+		res.Repeat = repeat
+		if err := benchmark.AppendFreivaldsBatchResultToCSV(writer, res); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func runExperimentWithInput(logK int, batch int, onlyCompile bool, input matrix.Input) benchmark.FreivaldsBatchResult {
 	if batch <= 0 {
 		log.Fatalf("batch must be positive, got %d", batch)
 	}
@@ -112,19 +154,14 @@ func runExperiment(logK int, batch int, onlyCompile bool, matrixSource, matrixDi
 		fmt.Printf("✅ Circuit compiled successfully! Total Constraints: %d\n", nbConstraints)
 
 		return benchmark.FreivaldsBatchResult{
-			LogK:            logK,
-			Batch:           batch,
-			Constraints:     nbConstraints,
-			MatrixSource:    "compile",
-			PeakMemoryBytes: benchmark.PeakRSSBytes(),
+			LogK:         logK,
+			Batch:        batch,
+			Constraints:  nbConstraints,
+			MatrixSource: "compile",
 		}
 	}
 
 	fmt.Println("=== 1. Preparing One Matrix Product for the Full Batch ===")
-	input, err := matrix.Prepare(K, matrixSource, matrixDir)
-	if err != nil {
-		log.Fatalf("matrix input: %v", err)
-	}
 	matrixComputeTime := input.Compute.Seconds()
 	fmt.Printf("   Matrix input: %s (%s); load: %s; compute: %s\n", input.Source, input.Path,
 		benchmark.FormatDurationSeconds(input.Load.Seconds()), benchmark.FormatDurationSeconds(matrixComputeTime))
@@ -142,17 +179,20 @@ func runExperiment(logK int, batch int, onlyCompile bool, matrixSource, matrixDi
 		log.Fatalf("❌ Circuit compilation failed: %v", err)
 	}
 
+	setupSampler := benchmark.StartMemory()
 	startSetup := time.Now()
 	pk, vk, err := groth16.Setup(r1csSystem)
 	if err != nil {
 		log.Fatalf("❌ Groth16 setup failed: %v", err)
 	}
 	setupTime := time.Since(startSetup).Seconds()
+	setupMemory := setupSampler.Stop()
 
 	numConstraints := r1csSystem.GetNbConstraints()
 	fmt.Printf("   📊 Constraints: %d\n", numConstraints)
 
 	fmt.Println("=== 3. Generating Proof ===")
+	proveSampler := benchmark.StartMemory()
 	assignment := newFreivaldsBatchCircuit(K, batch)
 	for b := 0; b < batch; b++ {
 		for i := 0; i < K; i++ {
@@ -174,13 +214,14 @@ func runExperiment(logK int, batch int, onlyCompile bool, matrixSource, matrixDi
 		log.Fatalf("❌ Proof generation failed: %v", err)
 	}
 	proveTime := time.Since(startProve).Seconds()
+	proveMemory := proveSampler.Stop()
 	fmt.Printf("   ✅ Prove Time: %s\n", benchmark.FormatDurationSeconds(proveTime))
 
-	var proofBuf bytes.Buffer
-	if _, err := proof.WriteTo(&proofBuf); err != nil {
+	proofBytes, err := proof.WriteTo(io.Discard)
+	if err != nil {
 		log.Fatalf("❌ Proof serialization failed: %v", err)
 	}
-	proofSize := proofBuf.Len()
+	proofSize := int(proofBytes)
 	fmt.Printf("   📦 Proof Size: %d B\n", proofSize)
 
 	fmt.Println("=== 4. Verifying Proof ===")
@@ -203,12 +244,14 @@ func runExperiment(logK int, batch int, onlyCompile bool, matrixSource, matrixDi
 		MatrixSource:      input.Source,
 		MatrixPath:        input.Path,
 		MatrixLoadTime:    input.Load.Seconds(),
+		MatrixWorkers:     input.Workers,
+		SetupMemory:       setupMemory,
+		ProveMemory:       proveMemory,
 		Constraints:       numConstraints,
 		SetupTime:         setupTime,
 		ProveTime:         proveTime,
 		VerifyTime:        verifyTime,
 		ProofSize:         proofSize,
-		PeakMemoryBytes:   benchmark.PeakRSSBytes(),
 	}
 }
 
