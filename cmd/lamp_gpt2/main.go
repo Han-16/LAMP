@@ -168,6 +168,9 @@ type preparedLayer struct {
 
 	matrixComputeTime float64
 	setupTime         float64
+	matrixCommitTime  float64
+	vectorComputeTime float64
+	vectorCommitTime  float64
 	encodingTime      float64
 	commitTime        float64
 	totalCommitTime   float64
@@ -254,6 +257,9 @@ func runExperiment(seqLog int, rho string, L int, onlyCompile bool) benchmark.LA
 			MatrixComputeTime: prep.matrixComputeTime,
 			SetupTime:         prep.setupTime,
 			ProtocolSetupTime: prep.setupTime,
+			MatrixCommitTime:  prep.matrixCommitTime,
+			VectorComputeTime: prep.vectorComputeTime,
+			VectorCommitTime:  prep.vectorCommitTime,
 			EncodingTime:      prep.encodingTime,
 			CommitTime:        prep.commitTime,
 			TotalCommitTime:   prep.totalCommitTime,
@@ -312,14 +318,23 @@ func runExperiment(seqLog int, rho string, L int, onlyCompile bool) benchmark.LA
 		log.Fatalf("expected %d committed groups, got commitments=%d blindings=%d keys=%d", numGroups, len(cmVec2), len(blindingsIn), len(prover.CK2))
 	}
 
-	startOffline := time.Now()
+	// Select all CP-Link inputs as vector preparation, outside the proof timer.
+	startLinkInputs := time.Now()
 	linkProofs := make([]crypto.QALinkProof, numGroups)
+	var linkBlocks [numGroups][][]fr.Element
+	var linkBlindings [numGroups][]fr.Element
 	for groupID := 0; groupID < numGroups; groupID++ {
-		blocks, _, blindings := prep.sampleCPLinkData(groupID)
+		linkBlocks[groupID], _, linkBlindings[groupID] = prep.sampleCPLinkData(groupID)
+	}
+	prep.vectorComputeTime += time.Since(startLinkInputs).Seconds()
+	prep.totalCommitTime = prep.commitTime + prep.vectorComputeTime
+
+	startOffline := time.Now()
+	for groupID := 0; groupID < numGroups; groupID++ {
 		linkProof, err := crypto.ProveQALink(
-			blocks,
+			linkBlocks[groupID],
 			blindingsIn[groupID],
-			blindings,
+			linkBlindings[groupID],
 			linkProvingKeys[groupID],
 		)
 		if err != nil {
@@ -375,42 +390,51 @@ func runExperiment(seqLog int, rho string, L int, onlyCompile bool) benchmark.LA
 		cpLinkProofSize += crypto.QALinkProofSizeBytes(linkProofs[i])
 	}
 	totalProofSize := groth16ProofSize + merkleProofSize + cpLinkProofSize
-	totalProveTime := prep.totalCommitTime + prep.merkleProveTime + circuitProveTime + cpLinkProveTime
+	totalProveTime := prep.merkleProveTime + circuitProveTime + cpLinkProveTime
 
+	fmt.Printf("Commit: ABC=%s, vector compute=%s, vector commit=%s, total=%s\n",
+		benchmark.FormatDurationSeconds(prep.matrixCommitTime), benchmark.FormatDurationSeconds(prep.vectorComputeTime),
+		benchmark.FormatDurationSeconds(prep.vectorCommitTime), benchmark.FormatDurationSeconds(prep.totalCommitTime))
+	fmt.Printf("Total Prove Time: %s; Commit and Prove Time: %s\n",
+		benchmark.FormatDurationSeconds(totalProveTime), benchmark.FormatDurationSeconds(prep.totalCommitTime+totalProveTime))
 	fmt.Println("LAMP GPT-2 proof verified successfully")
 	fmt.Printf("Proof sizes: Groth16=%d B, Merkle=%d B, CPLink=%d B, Total=%d B\n", groth16ProofSize, merkleProofSize, cpLinkProofSize, totalProofSize)
 
 	return benchmark.LAMPGPT2Result{
-		SeqLog:            seqLog,
-		SeqLen:            seqLen,
-		Rho:               rho,
-		Linker:            linker,
-		Merkle:            merkle,
-		NumQueries:        L,
-		NumClaims:         len(prep.claims),
-		NumCommitGroups:   numGroups,
-		Constraints:       nbConstraints,
-		MatrixComputeTime: prep.matrixComputeTime,
-		SetupTime:         setupTime,
-		ProtocolSetupTime: protocolSetupTime,
-		CircuitSetupTime:  circuitSetupTime,
-		CPLinkSetupTime:   cpLinkSetupTime,
-		EncodingTime:      prep.encodingTime,
-		CommitTime:        prep.commitTime,
-		TotalCommitTime:   prep.totalCommitTime,
-		MerkleProveTime:   prep.merkleProveTime,
-		CircuitProveTime:  circuitProveTime,
-		CPLinkProveTime:   cpLinkProveTime,
-		TotalProveTime:    totalProveTime,
-		CircuitVerifyTime: circuitVerifyTime,
-		MerkleVerifyTime:  merkleVerifyTime,
-		CPLinkVerifyTime:  cpLinkVerifyTime,
-		TotalVerifyTime:   totalVerifyTime,
-		MerkleProofSize:   merkleProofSize,
-		Groth16ProofSize:  groth16ProofSize,
-		CPLinkProofSize:   cpLinkProofSize,
-		TotalProofSize:    totalProofSize,
-		PeakMemoryBytes:   benchmark.PeakRSSBytes(),
+		SeqLog:             seqLog,
+		SeqLen:             seqLen,
+		Rho:                rho,
+		Linker:             linker,
+		Merkle:             merkle,
+		NumQueries:         L,
+		NumClaims:          len(prep.claims),
+		NumCommitGroups:    numGroups,
+		Constraints:        nbConstraints,
+		MatrixComputeTime:  prep.matrixComputeTime,
+		SetupTime:          setupTime,
+		ProtocolSetupTime:  protocolSetupTime,
+		CircuitSetupTime:   circuitSetupTime,
+		CPLinkSetupTime:    cpLinkSetupTime,
+		MatrixCommitTime:   prep.matrixCommitTime,
+		VectorComputeTime:  prep.vectorComputeTime,
+		VectorCommitTime:   prep.vectorCommitTime,
+		EncodingTime:       prep.encodingTime,
+		CommitTime:         prep.commitTime,
+		TotalCommitTime:    prep.totalCommitTime,
+		MerkleProveTime:    prep.merkleProveTime,
+		CircuitProveTime:   circuitProveTime,
+		CPLinkProveTime:    cpLinkProveTime,
+		TotalProveTime:     totalProveTime,
+		CommitAndProveTime: prep.totalCommitTime + totalProveTime,
+		CircuitVerifyTime:  circuitVerifyTime,
+		MerkleVerifyTime:   merkleVerifyTime,
+		CPLinkVerifyTime:   cpLinkVerifyTime,
+		TotalVerifyTime:    totalVerifyTime,
+		MerkleProofSize:    merkleProofSize,
+		Groth16ProofSize:   groth16ProofSize,
+		CPLinkProofSize:    cpLinkProofSize,
+		TotalProofSize:     totalProofSize,
+		PeakMemoryBytes:    benchmark.PeakRSSBytes(),
 	}
 }
 
@@ -441,13 +465,20 @@ func prepareLayer(seqLog int, rho string, L int) *preparedLayer {
 	for i := 0; i < groupScalar; i++ {
 		p.buildGroupTree(i)
 	}
+	p.matrixCommitTime = time.Since(startCommit).Seconds()
+	startCompute := time.Now()
 	p.tensorCm = crypto.HashElementsMiMC(p.extGroups[groupS].root, p.extGroups[groupD].root, p.extGroups[groupDh].root, p.extGroups[groupM].root)
 
 	challengeB := challengeForBProximity(p.tensorCm)
+	p.vectorComputeTime += time.Since(startCompute).Seconds()
 	for _, spec := range specs {
 		p.claims = append(p.claims, p.prepareClaim(spec, challengeB))
 	}
+	startVectorCommit := time.Now()
 	p.buildGroupTree(groupScalar)
+	p.vectorCommitTime += time.Since(startVectorCommit).Seconds()
+	startCompute = time.Now()
+	setupBeforeQueries := p.setupTime
 	p.globalCm = crypto.HashElementsMiMC(p.extGroups[groupS].root, p.extGroups[groupD].root, p.extGroups[groupDh].root, p.extGroups[groupM].root, p.extGroups[groupScalar].root)
 
 	p.addScoreValueRSBatches()
@@ -457,13 +488,10 @@ func prepareLayer(seqLog int, rho string, L int) *preparedLayer {
 	}
 	p.addClaimSamples()
 	p.addPackedAttentionChecks(tensors, L)
+	p.vectorComputeTime += time.Since(startCompute).Seconds() - (p.setupTime - setupBeforeQueries)
 	p.generateMerkleMultiProofs()
-	p.totalCommitTime = time.Since(startCommit).Seconds() - p.merkleProveTime
-	p.commitTime = p.totalCommitTime - p.encodingTime
-	if p.commitTime < 0 {
-		p.commitTime = 0
-	}
-	p.totalCommitTime = p.encodingTime + p.commitTime
+	p.commitTime = p.matrixCommitTime + p.vectorCommitTime
+	p.totalCommitTime = p.commitTime + p.vectorComputeTime
 
 	return p
 }
@@ -688,6 +716,7 @@ func (p *preparedLayer) buildGroupTree(groupID int) {
 }
 
 func (p *preparedLayer) prepareClaim(spec claimSpec, challengeB fr.Element) claimWitness {
+	startCompute := time.Now()
 	challenge := challengeForClaim(p.tensorCm, spec.id)
 	powers := matrix.Powers(challenge, spec.A.rows)
 	bPowers := matrix.Powers(challengeB, spec.B.rows)
@@ -716,9 +745,12 @@ func (p *preparedLayer) prepareClaim(spec claimSpec, challengeB fr.Element) clai
 		log.Fatalf("failed to encode B proximity fold for %s: %v", spec.name, err)
 	}
 
+	p.vectorComputeTime += time.Since(startCompute).Seconds()
+	startCommit := time.Now()
 	foldX := p.commitFoldedCodeword(fmt.Sprintf("%s.x", spec.name), encX)
 	foldYZ := p.commitFoldedCodeword(fmt.Sprintf("%s.yz", spec.name), encYZ)
 	foldBTest := p.commitFoldedCodeword(fmt.Sprintf("%s.b_test", spec.name), encBTest)
+	p.vectorCommitTime += time.Since(startCommit).Seconds()
 
 	return claimWitness{
 		spec: spec, vecX: vecX, vecYZ: vecYZ, vecBTest: vecBTest,

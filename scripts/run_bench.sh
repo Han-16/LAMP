@@ -66,8 +66,21 @@ export LAMP_RHO LAMP_BATCH_RHO LAMP_L LAMP_BATCH_L
 range=false
 batch_range=false
 args=""
+matrix_dir="${LAMP_MATRIX_DIR:-matrices}"
+expect_matrix_dir=false
 for arg in "$@"; do
+	if [ "$expect_matrix_dir" = true ]; then
+		matrix_dir="$arg"
+		expect_matrix_dir=false
+		continue
+	fi
 	case "$arg" in
+		--matrix-dir|-matrix-dir)
+			expect_matrix_dir=true
+			;;
+		--matrix-dir=*|-matrix-dir=*)
+			matrix_dir="${arg#*=}"
+			;;
 		--range|--all)
 			range=true
 			;;
@@ -83,6 +96,10 @@ for arg in "$@"; do
 			;;
 	esac
 done
+if [ "$expect_matrix_dir" = true ] || [ -z "$matrix_dir" ]; then
+	echo "matrix-dir requires a directory" >&2
+	exit 2
+fi
 
 is_true() {
 	case "${1:-}" in
@@ -118,6 +135,8 @@ case "$target" in
 		;;
 esac
 
+mkdir -p "$matrix_dir"
+matrix_dir="$(CDPATH= cd "$matrix_dir" && pwd)"
 docker build -t "$image" .
 
 env_args="--env-file .env"
@@ -161,7 +180,10 @@ run_process() {
 	# shellcheck disable=SC2086
 	docker run --rm $env_args \
 		-e BENCHMARK_APPEND_CSV="$append_results" \
+		-e LAMP_MATRIX_SOURCE="${LAMP_MATRIX_SOURCE:-auto}" \
+		-e LAMP_MATRIX_DIR=/workspace/matrices \
 		-v "$(pwd)/benchmark:/workspace/benchmark" \
+		-v "$matrix_dir:/workspace/matrices:ro" \
 		"$image" "/usr/local/bin/$protocol" $args "$@"
 }
 

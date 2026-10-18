@@ -39,6 +39,8 @@ func main() {
 	batchToFlag := flag.Int("batch-to", config.GetInt("FREIVALDS_BATCH_TO", 10), "Last batch size when -batch-range is enabled")
 	compileFlag := flag.Bool("compile", config.GetBool("FREIVALDS_BATCH_ONLY_COMPILE", false), "Only compile the circuit to get constraints")
 	onlyCompileFlag := flag.Bool("OnlyCompile", config.GetBool("FREIVALDS_BATCH_ONLY_COMPILE", false), "Alias for -compile")
+	matrixSourceFlag := flag.String("matrix-source", config.GetString("LAMP_MATRIX_SOURCE", "auto"), "Matrix input: auto, file, or generate")
+	matrixDirFlag := flag.String("matrix-dir", config.OutputDir("LAMP_MATRIX_DIR", "matrices"), "Directory containing matrices_k<K>.bin")
 	flag.Parse()
 
 	onlyCompile := *compileFlag || *onlyCompileFlag
@@ -75,19 +77,19 @@ func main() {
 		}
 		for logK := runLogKFrom; logK <= runLogKTo; logK++ {
 			for batch := runBatchFrom; batch <= runBatchTo; batch++ {
-				res := runExperiment(logK, batch, onlyCompile)
+				res := runExperiment(logK, batch, onlyCompile, *matrixSourceFlag, *matrixDirFlag)
 				benchmark.AppendFreivaldsBatchResultToCSV(writer, res)
 			}
 		}
 	} else {
-		res := runExperiment(*logKFlag, *batchFlag, onlyCompile)
+		res := runExperiment(*logKFlag, *batchFlag, onlyCompile, *matrixSourceFlag, *matrixDirFlag)
 		benchmark.AppendFreivaldsBatchResultToCSV(writer, res)
 	}
 
 	fmt.Println("🎉 All Freivalds batch benchmarks finished!")
 }
 
-func runExperiment(logK int, batch int, onlyCompile bool) benchmark.FreivaldsBatchResult {
+func runExperiment(logK int, batch int, onlyCompile bool, matrixSource, matrixDir string) benchmark.FreivaldsBatchResult {
 	if batch <= 0 {
 		log.Fatalf("batch must be positive, got %d", batch)
 	}
@@ -113,23 +115,24 @@ func runExperiment(logK int, batch int, onlyCompile bool) benchmark.FreivaldsBat
 			LogK:            logK,
 			Batch:           batch,
 			Constraints:     nbConstraints,
+			MatrixSource:    "compile",
 			PeakMemoryBytes: benchmark.PeakRSSBytes(),
 		}
 	}
 
-	fmt.Println("=== 1. Generating Matrices and Computing C_i = A_i * B_i ===")
+	fmt.Println("=== 1. Preparing One Matrix Product for the Full Batch ===")
+	input, err := matrix.Prepare(K, matrixSource, matrixDir)
+	if err != nil {
+		log.Fatalf("matrix input: %v", err)
+	}
+	matrixComputeTime := input.Compute.Seconds()
+	fmt.Printf("   Matrix input: %s (%s); load: %s; compute: %s\n", input.Source, input.Path,
+		benchmark.FormatDurationSeconds(input.Load.Seconds()), benchmark.FormatDurationSeconds(matrixComputeTime))
+	// Repeat one product; all downstream encoding and proof work still uses the full batch.
 	products := make([]freivaldsBatchProduct, batch)
 	for i := range products {
-		products[i].A = matrix.GenerateRandomMatrix(K, K)
-		products[i].B = matrix.GenerateRandomMatrix(K, K)
+		products[i].A, products[i].B, products[i].C = input.A, input.B, input.C
 	}
-
-	startCompute := time.Now()
-	for i := range products {
-		products[i].C = matrix.MatMul(products[i].A, products[i].B, K)
-	}
-	matrixComputeTime := time.Since(startCompute).Seconds()
-	fmt.Printf("   ✅ Matrix Compute Time: %.2f s\n", matrixComputeTime)
 
 	fmt.Println("=== 2. Circuit Compilation & Setup ===")
 	emptyCircuit := newFreivaldsBatchCircuit(K, batch)
@@ -197,6 +200,9 @@ func runExperiment(logK int, batch int, onlyCompile bool) benchmark.FreivaldsBat
 		LogK:              logK,
 		Batch:             batch,
 		MatrixComputeTime: matrixComputeTime,
+		MatrixSource:      input.Source,
+		MatrixPath:        input.Path,
+		MatrixLoadTime:    input.Load.Seconds(),
 		Constraints:       numConstraints,
 		SetupTime:         setupTime,
 		ProveTime:         proveTime,

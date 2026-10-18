@@ -49,6 +49,8 @@ func main() {
 	toFlag := flag.Int("to", config.GetInt("LAMP_LOG_K_TO", 20), "Last logK when -all is enabled")
 	compileFlag := flag.Bool("compile", config.GetBool("LAMP_ONLY_COMPILE", false), "Only compile the circuit to get constraints")
 	onlyCompileFlag := flag.Bool("OnlyCompile", config.GetBool("LAMP_ONLY_COMPILE", false), "Alias for -compile")
+	matrixSourceFlag := flag.String("matrix-source", config.GetString("LAMP_MATRIX_SOURCE", "auto"), "Matrix input: auto, file, or generate")
+	matrixDirFlag := flag.String("matrix-dir", config.OutputDir("LAMP_MATRIX_DIR", "matrices"), "Directory containing matrices_k<K>.bin")
 	flag.Parse()
 
 	onlyCompile := *compileFlag || *onlyCompileFlag
@@ -71,17 +73,17 @@ func main() {
 		}
 
 		for logK := *fromFlag; logK <= *toFlag; logK++ {
-			res := runExperiment(logK, *rhoFlag, *LFlag, onlyCompile)
+			res := runExperiment(logK, *rhoFlag, *LFlag, onlyCompile, *matrixSourceFlag, *matrixDirFlag)
 			benchmark.AppendLAMPResultToCSV(writer, res)
 		}
 	} else {
-		res := runExperiment(*logKFlag, *rhoFlag, *LFlag, onlyCompile)
+		res := runExperiment(*logKFlag, *rhoFlag, *LFlag, onlyCompile, *matrixSourceFlag, *matrixDirFlag)
 		benchmark.AppendLAMPResultToCSV(writer, res)
 	}
 	fmt.Println("🎉 All LAMP ZK tasks finished!")
 }
 
-func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.LAMPResult {
+func runExperiment(logK int, rhoStr string, L int, onlyCompile bool, matrixSource, matrixDir string) benchmark.LAMPResult {
 	merkle := merkleMulti
 	K := 1 << logK
 	var N int
@@ -144,6 +146,7 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.L
 			N:               N,
 			NumQueries:      L,
 			Constraints:     nbConstraints,
+			MatrixSource:    "compile",
 			PeakMemoryBytes: benchmark.PeakRSSBytes(),
 		}
 	}
@@ -163,12 +166,14 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.L
 	// =========================================================================
 	// 1. Compute Matrices A, B, C
 	// =========================================================================
-	matA := matrix.GenerateRandomMatrix(K, K)
-	matB := matrix.GenerateRandomMatrix(K, K)
-	startCompute := time.Now()
-	matC := matrix.MatMul(matA, matB, K)
-	matrixComputeTime := time.Since(startCompute).Seconds()
-	fmt.Printf("   ✅ Matrix Compute Time: %.2f s\n", matrixComputeTime)
+	input, err := matrix.Prepare(K, matrixSource, matrixDir)
+	if err != nil {
+		log.Fatalf("matrix input: %v", err)
+	}
+	matrixComputeTime := input.Compute.Seconds()
+	fmt.Printf("   Matrix input: %s (%s); load: %s; compute: %s\n", input.Source, input.Path,
+		benchmark.FormatDurationSeconds(input.Load.Seconds()), benchmark.FormatDurationSeconds(matrixComputeTime))
+	matA, matB, matC := input.A, input.B, input.C
 
 	// =========================================================================
 	// 2. Encode & Commit Matrices A, B, C
@@ -213,18 +218,18 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.L
 	leavesABC, blABC = crypto.BatchPedersenCommitABCBlinded(colsEncA, colsEncB, colsEncC, ckABC)
 	treeABC, rootABC = crypto.BuildMerkleTreeFromGroupElements(leavesABC, depth)
 
+	matCommitTime := time.Since(startMatCommit).Seconds()
+
+	startVecCompute := time.Now()
 	CmABC := crypto.HashElementsMiMC(rootABC)
 	ChallengeR := crypto.HashElements(CmABC)
 	ChallengeRPowers := matrix.Powers(ChallengeR, K)
 	ChallengeB := crypto.HashElements(CmABC, uint64Element(challengeBLabel))
 	ChallengeBPowers := matrix.Powers(ChallengeB, K)
-	matrixTotalCommitTime := time.Since(startMatCommit).Seconds()
-	matCommitTime := matrixTotalCommitTime - matrixEncodingTime
 
 	// =========================================================================
 	// 3. Compute x, yz = x*B, and an independent structured fold of B.
 	// =========================================================================
-	startVecCommit := time.Now()
 	vecX := matrix.VecMatMul(ChallengeRPowers, matA, K)
 	vecYZ := matrix.VecMatMul(vecX, matB, K)
 	vecBTest := matrix.VecMatMul(ChallengeBPowers, matB, K)
@@ -238,20 +243,23 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.L
 		log.Fatalf("❌ B proximity vector encoding failed: %v", err)
 	}
 
+	vectorComputeTime := time.Since(startVecCompute).Seconds()
+	startVecCommit := time.Now()
 	colsXYZ := combineXYZScalars(encX, encYZ, encBTest)
 	leavesXYZ, blXYZ := crypto.BatchPedersenCommitBlinded(colsXYZ, ckXYZ)
 	treeXYZ, rootXYZ := crypto.BuildMerkleTreeFromGroupElements(leavesXYZ, depth)
 
+	vecCommitTime := time.Since(startVecCommit).Seconds()
+	startQueries := time.Now()
 	CmXYZ := crypto.HashElementsMiMC(rootXYZ)
 	indices, err := crypto.GenerateIndices(CmXYZ, N, L)
 	if err != nil {
 		log.Fatalf("❌ Query index derivation failed: %v", err)
 	}
-	vectorTotalCommitTime := time.Since(startVecCommit).Seconds()
-	vecCommitTime := vectorTotalCommitTime - vectorEncodingTime
-	encodingTime := matrixEncodingTime + vectorEncodingTime
+	vectorComputeTime += time.Since(startQueries).Seconds()
+	encodingTime := matrixEncodingTime + vectorEncodingTime // Diagnostic; already in the phase timers.
 	commitTime := matCommitTime + vecCommitTime
-	totalCommitTime := encodingTime + commitTime
+	totalCommitTime := commitTime + vectorComputeTime
 
 	// =========================================================================
 	// 4. Circuit Compile & Setup
@@ -375,7 +383,7 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.L
 		log.Fatalf("❌ Circuit proof failed: %v", err)
 	}
 	circuitProveTime := time.Since(startCircuitProve).Seconds()
-	fmt.Printf("   ✅ Prove Time: %s\n", benchmark.FormatDurationSeconds(circuitProveTime))
+	fmt.Printf("   ✅ Circuit Prove Time: %s\n", benchmark.FormatDurationSeconds(circuitProveTime))
 	cmVec2, blindingsIn := protocol.ExtractGroth16CommitmentsAndBlindings(circuitProof)
 
 	// =========================================================================
@@ -391,7 +399,8 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.L
 	mmpXYZ = crypto.GetMerkleMultiProof(treeXYZ, indices, depth)
 	merkleProveTime := time.Since(startMerkleProve).Seconds()
 
-	startCPLinkProve := time.Now()
+	// Count sampled input selection/packing as vector preparation.
+	startLinkInputs := time.Now()
 
 	columnBlocks := make([][]fr.Element, 0, L)
 	columnExternalCommitments := make([]bn254.G1Affine, 0, L)
@@ -411,6 +420,9 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.L
 		scalarExternalBlindings = append(scalarExternalBlindings, blXYZ[idx])
 	}
 
+	vectorComputeTime += time.Since(startLinkInputs).Seconds()
+	totalCommitTime = commitTime + vectorComputeTime
+	startCPLinkProve := time.Now()
 	columnLinkProof, err := crypto.ProveQALink(
 		columnBlocks,
 		blindingsIn[columnCommitIndex],
@@ -500,7 +512,13 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.L
 	fmt.Printf("   ✅ Verify Time: %s\n", benchmark.FormatDurationSeconds(totalVerifyTime))
 	fmt.Println("✅ ALL BLINDED ZK PROOFS VERIFIED SUCCESSFULLY!")
 
-	totalProveTime := totalCommitTime + merkleProveTime + circuitProveTime + cpLinkProveTime
+	totalProveTime := merkleProveTime + circuitProveTime + cpLinkProveTime
+	commitAndProveTime := totalCommitTime + totalProveTime
+	fmt.Printf("   Commit: ABC=%s, vector compute=%s, vector commit=%s, total=%s\n",
+		benchmark.FormatDurationSeconds(matCommitTime), benchmark.FormatDurationSeconds(vectorComputeTime),
+		benchmark.FormatDurationSeconds(vecCommitTime), benchmark.FormatDurationSeconds(totalCommitTime))
+	fmt.Printf("   Total Prove Time: %s; Commit and Prove Time: %s\n",
+		benchmark.FormatDurationSeconds(totalProveTime), benchmark.FormatDurationSeconds(commitAndProveTime))
 
 	var buf bytes.Buffer
 	circuitProof.WriteTo(&buf)
@@ -518,36 +536,41 @@ func runExperiment(logK int, rhoStr string, L int, onlyCompile bool) benchmark.L
 		groth16ProofSize, merkleProofSize, cpLinkProofSize, totalProofSize)
 
 	return benchmark.LAMPResult{
-		LogK:              logK,
-		Rho:               rhoStr,
-		Linker:            linkerQALink,
-		Merkle:            merkle,
-		N:                 N,
-		NumQueries:        L,
-		Constraints:       nbConstraints,
-		MatrixComputeTime: matrixComputeTime,
-		SetupTime:         setupTime,
-		ProtocolSetupTime: protocolSetupTime,
-		CircuitSetupTime:  circuitSetupTime,
-		CPLinkSetupTime:   cpLinkSetupTime,
-		MatrixCommitTime:  matCommitTime,
-		VectorCommitTime:  vecCommitTime,
-		EncodingTime:      encodingTime,
-		CommitTime:        commitTime,
-		TotalCommitTime:   totalCommitTime,
-		MerkleProveTime:   merkleProveTime,
-		CircuitProveTime:  circuitProveTime,
-		CPLinkProveTime:   cpLinkProveTime,
-		TotalProveTime:    totalProveTime,
-		CircuitVerifyTime: circuitVerifyTime,
-		MerkleVerifyTime:  merkleVerifyTime,
-		CPLinkVerifyTime:  cpLinkVerifyTime,
-		TotalVerifyTime:   totalVerifyTime,
-		MerkleProofSize:   merkleProofSize,
-		Groth16ProofSize:  groth16ProofSize,
-		CPLinkProofSize:   cpLinkProofSize,
-		TotalProofSize:    totalProofSize,
-		PeakMemoryBytes:   benchmark.PeakRSSBytes(),
+		LogK:               logK,
+		Rho:                rhoStr,
+		Linker:             linkerQALink,
+		Merkle:             merkle,
+		N:                  N,
+		NumQueries:         L,
+		Constraints:        nbConstraints,
+		MatrixComputeTime:  matrixComputeTime,
+		MatrixSource:       input.Source,
+		MatrixPath:         input.Path,
+		MatrixLoadTime:     input.Load.Seconds(),
+		SetupTime:          setupTime,
+		ProtocolSetupTime:  protocolSetupTime,
+		CircuitSetupTime:   circuitSetupTime,
+		CPLinkSetupTime:    cpLinkSetupTime,
+		MatrixCommitTime:   matCommitTime,
+		VectorCommitTime:   vecCommitTime,
+		VectorComputeTime:  vectorComputeTime,
+		EncodingTime:       encodingTime,
+		CommitTime:         commitTime,
+		TotalCommitTime:    totalCommitTime,
+		MerkleProveTime:    merkleProveTime,
+		CircuitProveTime:   circuitProveTime,
+		CPLinkProveTime:    cpLinkProveTime,
+		TotalProveTime:     totalProveTime,
+		CommitAndProveTime: commitAndProveTime,
+		CircuitVerifyTime:  circuitVerifyTime,
+		MerkleVerifyTime:   merkleVerifyTime,
+		CPLinkVerifyTime:   cpLinkVerifyTime,
+		TotalVerifyTime:    totalVerifyTime,
+		MerkleProofSize:    merkleProofSize,
+		Groth16ProofSize:   groth16ProofSize,
+		CPLinkProofSize:    cpLinkProofSize,
+		TotalProofSize:     totalProofSize,
+		PeakMemoryBytes:    benchmark.PeakRSSBytes(),
 	}
 }
 

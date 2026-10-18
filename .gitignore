@@ -3,3 +3,5 @@
 benchmark/**/*.csv
 benchmark/**/system_info.json
 paper/
+/matrices/
+/bin/

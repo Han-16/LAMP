@@ -108,3 +108,17 @@ func foldNative(lhs, rhs []fr.Element) fr.Element {
 	}
 	return out
 }
+
+func TestClaimSeparatesComputeAndCommitTimers(t *testing.T) {
+	p := &preparedLayer{rho: "1/2"}
+	p.extGroups[groupScalar] = &extGroup{ck: crypto.SetupCommitKey(1)}
+	data := [][]fr.Element{{fr.One(), fr.One()}, {fr.One(), fr.One()}}
+	a := &tensor{rows: 2, cols: 2, data: data}
+	c := p.prepareClaim(claimSpec{id: 1, name: "tiny", A: a, B: a, C: a}, fr.One())
+	if p.vectorComputeTime <= 0 || p.vectorCommitTime <= 0 || p.encodingTime <= 0 {
+		t.Fatal("missing vector computation, commitment or encoding timer")
+	}
+	if c.foldX == nil || c.foldYZ == nil || c.foldBTest == nil || len(p.extGroups[groupScalar].commits) != 12 {
+		t.Fatal("folded commitments were not generated")
+	}
+}

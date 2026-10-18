@@ -30,6 +30,8 @@ func main() {
 	toFlag := flag.Int("to", config.GetInt("FREIVALDS_LOG_K_TO", 15), "Last logK when -all is enabled")
 	compileFlag := flag.Bool("compile", config.GetBool("FREIVALDS_ONLY_COMPILE", false), "Only compile the circuit to get constraints")
 	onlyCompileFlag := flag.Bool("OnlyCompile", config.GetBool("FREIVALDS_ONLY_COMPILE", false), "Alias for -compile")
+	matrixSourceFlag := flag.String("matrix-source", config.GetString("LAMP_MATRIX_SOURCE", "auto"), "Matrix input: auto, file, or generate")
+	matrixDirFlag := flag.String("matrix-dir", config.OutputDir("LAMP_MATRIX_DIR", "matrices"), "Directory containing matrices_k<K>.bin")
 	flag.Parse()
 
 	onlyCompile := *compileFlag || *onlyCompileFlag
@@ -53,19 +55,19 @@ func main() {
 		}
 
 		for logK := *fromFlag; logK <= *toFlag; logK++ {
-			res := runExperiment(logK, onlyCompile)
+			res := runExperiment(logK, onlyCompile, *matrixSourceFlag, *matrixDirFlag)
 			benchmark.AppendFreivaldsResultToCSV(writer, res)
 			fmt.Println("----------------------------------------------------------------")
 		}
 	} else {
-		res := runExperiment(*logKFlag, onlyCompile)
+		res := runExperiment(*logKFlag, onlyCompile, *matrixSourceFlag, *matrixDirFlag)
 		benchmark.AppendFreivaldsResultToCSV(writer, res)
 	}
 
 	fmt.Println("🎉 All Freivalds benchmarks finished!")
 }
 
-func runExperiment(logK int, onlyCompile bool) benchmark.FreivaldsResult {
+func runExperiment(logK int, onlyCompile bool, matrixSource, matrixDir string) benchmark.FreivaldsResult {
 	K := 1 << logK
 	field := ecc.BN254.ScalarField()
 
@@ -87,6 +89,7 @@ func runExperiment(logK int, onlyCompile bool) benchmark.FreivaldsResult {
 		return benchmark.FreivaldsResult{
 			LogK:            logK,
 			Constraints:     nbConstraints,
+			MatrixSource:    "compile",
 			PeakMemoryBytes: benchmark.PeakRSSBytes(),
 		}
 	}
@@ -94,15 +97,15 @@ func runExperiment(logK int, onlyCompile bool) benchmark.FreivaldsResult {
 	// =========================================================================
 	// 1. Data Preparation & Compute C = A * B
 	// =========================================================================
-	fmt.Println("=== 1. Generating Matrices and Computing C = A * B ===")
-	matA := matrix.GenerateRandomMatrix(K, K)
-	matB := matrix.GenerateRandomMatrix(K, K)
-
-	startCompute := time.Now()
-	// Matrix 연산 패키지의 MatMul 활용 (O(K^3))
-	matC := matrix.MatMul(matA, matB, K)
-	matrixComputeTime := time.Since(startCompute).Seconds()
-	fmt.Printf("   ✅ Matrix Compute Time: %.2f s\n", matrixComputeTime)
+	fmt.Println("=== 1. Preparing Matrices A, B, C ===")
+	input, err := matrix.Prepare(K, matrixSource, matrixDir)
+	if err != nil {
+		log.Fatalf("matrix input: %v", err)
+	}
+	matrixComputeTime := input.Compute.Seconds()
+	fmt.Printf("   Matrix input: %s (%s); load: %s; compute: %s\n", input.Source, input.Path,
+		benchmark.FormatDurationSeconds(input.Load.Seconds()), benchmark.FormatDurationSeconds(matrixComputeTime))
+	matA, matB, matC := input.A, input.B, input.C
 
 	// =========================================================================
 	// 2. Circuit Compilation & Groth16 Setup
@@ -180,6 +183,9 @@ func runExperiment(logK int, onlyCompile bool) benchmark.FreivaldsResult {
 	return benchmark.FreivaldsResult{
 		LogK:              logK,
 		MatrixComputeTime: matrixComputeTime,
+		MatrixSource:      input.Source,
+		MatrixPath:        input.Path,
+		MatrixLoadTime:    input.Load.Seconds(),
 		Constraints:       numConstraints,
 		SetupTime:         setupTime,
 		ProveTime:         proveTime,

@@ -2,3 +2,6 @@
 .DS_Store
 .env
 benchmark/benchmark_results
+/matrices/
+/bin/
+*.bin

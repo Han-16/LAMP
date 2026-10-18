@@ -1,6 +1,7 @@
 package matrix
 
 import (
+	"runtime"
 	"sync"
 
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
@@ -46,37 +47,13 @@ func Powers(r fr.Element, K int) []fr.Element {
 }
 
 func MatMul(A, B [][]fr.Element, K int) [][]fr.Element {
-	C := make([][]fr.Element, K)
-	for i := 0; i < K; i++ {
-		C[i] = make([]fr.Element, K)
+	if err := Check(A, K); err != nil {
+		panic(err)
 	}
-
-	BT := make([][]fr.Element, K)
-	for i := 0; i < K; i++ {
-		BT[i] = make([]fr.Element, K)
-		for j := 0; j < K; j++ {
-			BT[i][j] = B[j][i]
-		}
+	if err := Check(B, K); err != nil {
+		panic(err)
 	}
-
-	var wg sync.WaitGroup
-	for i := 0; i < K; i++ {
-		wg.Add(1)
-		go func(row int) {
-			defer wg.Done()
-			for j := 0; j < K; j++ {
-				var sum fr.Element
-				for k := 0; k < K; k++ {
-					var tmp fr.Element
-					tmp.Mul(&A[row][k], &BT[j][k])
-					sum.Add(&sum, &tmp)
-				}
-				C[row][j] = sum
-			}
-		}(i)
-	}
-	wg.Wait()
-	return C
+	return MultiplyWithWorkers(A, B, runtime.GOMAXPROCS(0))
 }
 
 func MatMulRect(A, B [][]fr.Element, rows, inner, cols int) [][]fr.Element {

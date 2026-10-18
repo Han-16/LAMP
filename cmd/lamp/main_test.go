@@ -1,6 +1,7 @@
 package main
 
 import (
+	"math"
 	"testing"
 
 	"example.com/lamp/crypto"
@@ -44,6 +45,24 @@ func TestStructuredBProximityFoldMatchesEncoding(t *testing.T) {
 		}
 		if !foldedColumn.Equal(&encBTest[column]) {
 			t.Fatalf("folded B column %d does not match its RS codeword", column)
+		}
+	}
+}
+
+func TestCommitAndProveTimingSplit(t *testing.T) {
+	r := runExperiment(2, "1/2", 2, false, "generate", t.TempDir())
+	if r.MatrixCommitTime <= 0 || r.VectorComputeTime <= 0 || r.VectorCommitTime <= 0 {
+		t.Fatal("missing commitment phase timing")
+	}
+	checks := [][2]float64{
+		{r.CommitTime, r.MatrixCommitTime + r.VectorCommitTime},
+		{r.TotalCommitTime, r.MatrixCommitTime + r.VectorComputeTime + r.VectorCommitTime},
+		{r.TotalProveTime, r.CircuitProveTime + r.MerkleProveTime + r.CPLinkProveTime},
+		{r.CommitAndProveTime, r.TotalCommitTime + r.TotalProveTime},
+	}
+	for _, c := range checks {
+		if math.Abs(c[0]-c[1]) > 1e-9 {
+			t.Fatalf("invalid timing sum: got %g, want %g", c[0], c[1])
 		}
 	}
 }
