@@ -16,8 +16,8 @@ type lampAverageGroup struct {
 	runs       int
 	timings    []float64
 	proofSizes []float64
-	memory     [6]float64
-	available  [6]bool
+	memory     [4]float64
+	available  [4]bool
 }
 
 // Accumulate raw values from this invocation; never average formatted CSV cells.
@@ -30,7 +30,7 @@ func (set *LAMPCSV) addAverage(res LAMPResult, extra []string) {
 	if g == nil {
 		g = &lampAverageGroup{first: res, extra: slices.Clone(extra),
 			timings: make([]float64, len(lampTimingHeader)), proofSizes: make([]float64, len(lampProofSizeHeader)),
-			available: [6]bool{true, true, true, true, true, true}}
+			available: [4]bool{true, true, true, true}}
 		set.groups[key] = g
 		set.groupOrder = append(set.groupOrder, g)
 	}
@@ -41,11 +41,9 @@ func (set *LAMPCSV) addAverage(res LAMPResult, extra []string) {
 	for i, value := range res.proofSizes() {
 		g.proofSizes[i] += float64(value)
 	}
-	for i, m := range []Memory{res.SetupMemory, res.CommitMemory, res.ProveMemory} {
-		g.memory[2*i] += float64(m.HeapBytes)
-		g.memory[2*i+1] += float64(m.RSSBytes)
-		g.available[2*i] = g.available[2*i] && m.Measured
-		g.available[2*i+1] = g.available[2*i+1] && m.Measured && m.RSSAvailable
+	for i, m := range res.memoryPeaks() {
+		g.memory[i] += float64(m.RSSBytes)
+		g.available[i] = g.available[i] && m.Measured && m.RSSAvailable
 	}
 }
 

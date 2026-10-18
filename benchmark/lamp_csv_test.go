@@ -40,8 +40,9 @@ func TestLAMPCSVSplit(t *testing.T) {
 		CircuitProveTime: .029, CPLinkProveTime: .037, MerkleProveTime: .019, TotalProveTime: .085, CommitAndProveTime: .133,
 		CircuitVerifyTime: .001, CPLinkVerifyTime: .002, MerkleVerifyTime: .003, TotalVerifyTime: .007,
 		Groth16ProofSize: 292, MerkleProofSize: 64, CPLinkProofSize: 64, QueryCommitmentsSize: 128, TotalProofSize: 548,
-		SetupMemory:  Memory{HeapBytes: 128 << 20, RSSBytes: 1536 << 20, RSSAvailable: true, Measured: true},
-		CommitMemory: Memory{HeapBytes: 1 << 30, Measured: true},
+		SetupMemory:  Memory{RSSBytes: 1536 << 20, RSSAvailable: true, Measured: true},
+		CommitMemory: Memory{RSSBytes: 1 << 30, RSSAvailable: true, Measured: true},
+		ProveMemory:  Memory{RSSBytes: 512 << 20, RSSAvailable: true, Measured: true},
 	}
 	if err := AppendLAMPResultToCSV(set, res); err != nil {
 		t.Fatal(err)
@@ -66,10 +67,10 @@ func TestLAMPCSVSplit(t *testing.T) {
 		t.Fatalf("wrong info row: %v", info[1])
 	}
 	memory := readCSV(t, filepath.Join(filepath.Dir(path), "lamp_memory.csv"))
-	if !slices.Equal(memory[0], strings.Split("run_id,repeat,commit_mode,logk,rho,setup_peak_heap,setup_peak_rss,commit_peak_heap,commit_peak_rss,prove_peak_heap,prove_peak_rss", ",")) {
-		t.Fatal("wrong LED memory columns")
+	if !slices.Equal(memory[0], strings.Split("run_id,repeat,commit_mode,logk,rho,peak_setup,peak_commit,peak_prove,peak", ",")) {
+		t.Fatal("wrong RSS memory columns")
 	}
-	if !slices.Equal(memory[1], []string{set.runID, "1", "legacy", "7", "1/2", "128.00 MiB", "1.50 GiB", "1.00 GiB", "", "", ""}) {
+	if !slices.Equal(memory[1], []string{set.runID, "1", "legacy", "7", "1/2", "1.50 GiB", "1.00 GiB", "512.00 MiB", "1.00 GiB"}) {
 		t.Fatalf("wrong memory row: %v", memory[1])
 	}
 
@@ -170,5 +171,38 @@ func TestLEDDurationFormat(t *testing.T) {
 		if got := FormatDurationSeconds(seconds); got != want {
 			t.Errorf("%g seconds: %s, want %s", seconds, got, want)
 		}
+	}
+}
+
+func TestCombinedRSSPeak(t *testing.T) {
+	observed := func(bytes uint64) Memory {
+		return Memory{RSSBytes: bytes, RSSAvailable: true, Measured: true}
+	}
+	for _, test := range []struct {
+		name          string
+		commit, prove Memory
+		want          uint64
+		available     bool
+	}{
+		{"commit larger", observed(200), observed(100), 200, true},
+		{"prove larger", observed(100), observed(200), 200, true},
+		{"equal", observed(200), observed(200), 200, true},
+		{"measured zero", observed(0), observed(0), 0, true},
+		{"commit RSS unavailable", Memory{Measured: true}, observed(200), 0, false},
+		{"prove RSS unavailable", observed(200), Memory{Measured: true}, 0, false},
+		{"commit unmeasured", Memory{}, observed(200), 0, false},
+		{"prove unmeasured", observed(200), Memory{}, 0, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			res := LAMPResult{SetupMemory: observed(1000), CommitMemory: test.commit, ProveMemory: test.prove}
+			metrics := res.memoryPeaks()
+			peak := metrics[3]
+			if got := peak.Measured && peak.RSSAvailable; got != test.available {
+				t.Fatalf("peak availability=%v; want %v", got, test.available)
+			}
+			if test.available && peak.RSSBytes != test.want {
+				t.Fatalf("peak=%d; want %d, excluding setup", peak.RSSBytes, test.want)
+			}
+		})
 	}
 }

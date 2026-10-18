@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-// Metric names and ordering match LED's individual and average CSVs.
+// Timing and proof-size names and ordering match LED's CSVs.
 var lampTimingHeader = []string{
 	"protocol_setup_time", "circuit_setup_time", "cplink_setup_time", "total_setup_time",
 	"pedersen_commit_time", "merkle_commit_time", "abc_commit_time", "vector_compute_time", "vector_commit_time",
@@ -26,7 +26,7 @@ var lampProofSizeHeader = []string{
 	"snark_proof_bytes", "merkle_proof_bytes", "cplink_proof_bytes", "query_commitments_bytes", "total_proof_bytes",
 }
 var lampMemoryMetricHeader = []string{
-	"setup_peak_heap", "setup_peak_rss", "commit_peak_heap", "commit_peak_rss", "prove_peak_heap", "prove_peak_rss",
+	"peak_setup", "peak_commit", "peak_prove", "peak",
 }
 var lampCSVHeader = slices.Concat(
 	[]string{"run_id", "repeat", "commit_mode", "logk", "rho", "constraint"}, lampTimingHeader, lampProofSizeHeader,
@@ -191,6 +191,16 @@ func (res LAMPResult) proofSizes() []int {
 	return []int{res.Groth16ProofSize, res.MerkleProofSize, res.CPLinkProofSize, res.QueryCommitmentsSize, res.TotalProofSize}
 }
 
+// Compute the combined peak from raw bytes, excluding setup and requiring both
+// commit/prove observations. Shared by individual rows and repetition averages.
+func (res LAMPResult) memoryPeaks() [4]Memory {
+	commit, prove := res.CommitMemory, res.ProveMemory
+	peak := Memory{RSSBytes: max(commit.RSSBytes, prove.RSSBytes),
+		RSSAvailable: commit.RSSAvailable && prove.RSSAvailable,
+		Measured:     commit.Measured && prove.Measured}
+	return [4]Memory{res.SetupMemory, commit, prove, peak}
+}
+
 func optionalSeconds(seconds float64) string {
 	// LED's separate verifier MSM phases do not exist in LAMP.
 	if math.IsNaN(seconds) {
@@ -228,15 +238,12 @@ func (set *LAMPCSV) append(res LAMPResult, extraInfo []string) error {
 		strconv.Itoa(res.MatrixWorkers), formatSeconds(res.MatrixComputeTime), formatSeconds(res.MatrixLoadTime), res.Linker, res.Merkle, n)
 	info = append(info, extraInfo...)
 	memory := slices.Clone(identity)
-	for _, m := range []Memory{res.SetupMemory, res.CommitMemory, res.ProveMemory} {
-		heap, rss := "", ""
-		if m.Measured {
-			heap = memorySize(m.HeapBytes)
-		}
+	for _, m := range res.memoryPeaks() {
+		cell := ""
 		if m.Measured && m.RSSAvailable {
-			rss = memorySize(m.RSSBytes)
+			cell = memorySize(m.RSSBytes)
 		}
-		memory = append(memory, heap, rss)
+		memory = append(memory, cell)
 	}
 	for i, row := range [][]string{record, info, memory} {
 		if err := set.writers[i].Write(row); err != nil {

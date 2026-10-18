@@ -3,7 +3,6 @@ package benchmark
 import (
 	"os"
 	"runtime"
-	"runtime/metrics"
 	"strconv"
 	"strings"
 	"time"
@@ -11,10 +10,9 @@ import (
 
 const MemoryInterval = 10 * time.Millisecond
 
-// Memory contains independently sampled maxima, in bytes. These are absolute
-// process values, not allocations attributable only to the measured stage.
+// Memory contains sampled peak RSS, in bytes. This is absolute process
+// resident memory, not allocations attributable only to the measured stage.
 type Memory struct {
-	HeapBytes    uint64
 	RSSBytes     uint64
 	RSSAvailable bool
 	Measured     bool
@@ -28,11 +26,9 @@ type MemorySampler struct {
 // StartMemory samples once before returning, periodically during the stage,
 // and once when Stop is called. Each sampler starts with fresh maxima.
 func StartMemory() *MemorySampler {
-	heap := []metrics.Sample{{Name: "/memory/classes/heap/objects:bytes"}}
 	read := func() Memory {
-		metrics.Read(heap)
 		rss, available := residentBytes()
-		return Memory{HeapBytes: heap[0].Value.Uint64(), RSSBytes: rss, RSSAvailable: available, Measured: true}
+		return Memory{RSSBytes: rss, RSSAvailable: available, Measured: true}
 	}
 	return startMemory(MemoryInterval, read)
 }
@@ -42,7 +38,6 @@ func startMemory(interval time.Duration, read func() Memory) *MemorySampler {
 	peak := read()
 	sample := func() {
 		current := read()
-		peak.HeapBytes = max(peak.HeapBytes, current.HeapBytes)
 		peak.RSSBytes = max(peak.RSSBytes, current.RSSBytes)
 		// Do not present a partially failed RSS observation as a valid peak.
 		peak.RSSAvailable = peak.RSSAvailable && current.RSSAvailable
@@ -100,5 +95,5 @@ func (m Memory) Merge(other Memory) Memory {
 	if !other.Measured {
 		return m
 	}
-	return Memory{HeapBytes: max(m.HeapBytes, other.HeapBytes), RSSBytes: max(m.RSSBytes, other.RSSBytes), RSSAvailable: m.RSSAvailable && other.RSSAvailable, Measured: true}
+	return Memory{RSSBytes: max(m.RSSBytes, other.RSSBytes), RSSAvailable: m.RSSAvailable && other.RSSAvailable, Measured: true}
 }

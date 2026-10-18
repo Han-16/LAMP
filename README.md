@@ -119,7 +119,7 @@ implementations. GPT-2 experiments retain their existing input-generation flow.
 
 Range scripts run one configuration per fresh container, sequentially. No CPU
 or memory limit is applied, so each benchmark process can use all resources
-available to Docker. LAMP records stage-specific sampled heap/RSS peaks in a
+available to Docker. LAMP records stage-specific sampled RSS peaks in a
 companion memory CSV. Freivalds retains its process-wide `PeakMemory(B)` value.
 
 
@@ -320,15 +320,20 @@ four components. Statement roots, setup keys, and transport framing are excluded
 LAMP retains its own proof structure: square and batch have two links and two
 sets of queried commitments; GPT-2 counts the actual sampled groups.
 
-The memory CSV has LED's eleven columns: `run_id`, `repeat`, `commit_mode`,
-`logk`, `rho`, then
-`setup_peak_heap`, `setup_peak_rss`, `commit_peak_heap`, `commit_peak_rss`,
-`prove_peak_heap`, `prove_peak_rss`. Memory is sampled at phase boundaries and
-every 10 ms. Disjoint intervals of the same phase are merged by their maxima;
-Prove includes vector computation and vector commitments. Values are absolute
-process usage, not allocations attributable only to a phase. Values use MiB
-below 1 GiB and GiB otherwise, to two decimal places. RSS is supported on Linux;
-unsupported RSS and unmeasured phases are empty (including compile-only runs).
+The memory CSV has nine columns: `run_id`, `repeat`, `commit_mode`, `logk`,
+`rho`, followed by the four RSS-only measurements `peak_setup`, `peak_commit`,
+`peak_prove`, and `peak`. Heap memory is not measured. For each repetition,
+`peak = max(peak_commit, peak_prove)`; setup is excluded even when it is larger.
+The same four columns appear in the average CSV. Its `peak` is the arithmetic
+mean of the individual repetitions' peaks, computed before display rounding.
+
+RSS is sampled at phase boundaries and every 10 ms. Disjoint intervals of the
+same phase are merged by their maxima; Prove includes vector computation and
+vector commitments. Values are absolute process resident memory, not allocations
+attributable only to a phase. Values use MiB below 1 GiB and GiB otherwise, to
+two decimal places. RSS is supported on Linux. Unsupported or unmeasured phases
+are empty (including compile-only runs). `peak` is empty if either Commit or
+Prove lacks RSS; an average is empty if any repetition lacks that measurement.
 
 Appending (`BENCHMARK_APPEND_CSV=true`) checks the three individual headers and
 data-row counts plus the average header before writing. Old CSVs are

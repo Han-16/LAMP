@@ -27,8 +27,9 @@ func TestLAMPAveragesUseRawValuesAndCurrentInvocation(t *testing.T) {
 			MatrixSource: "file", MatrixPath: "k4.bin", MatrixLoadTime: .009,
 			CircuitProveTime: duration, ProtocolSetupTime: float64(i+1) * .5,
 			MerkleProofSize: []int{64, 96, 97}[i],
-			SetupMemory:     Memory{HeapBytes: uint64(i+1) << 20, RSSBytes: 4 << 20, Measured: true, RSSAvailable: i != 1},
-			CommitMemory:    Memory{HeapBytes: 5 << 20, RSSBytes: 6 << 20, Measured: true, RSSAvailable: true}}
+			SetupMemory:     Memory{RSSBytes: 4 << 20, Measured: true, RSSAvailable: i != 1},
+			CommitMemory:    Memory{RSSBytes: []uint64{8, 2, 4}[i] << 20, Measured: true, RSSAvailable: true},
+			ProveMemory:     Memory{RSSBytes: []uint64{2, 10, 4}[i] << 20, Measured: true, RSSAvailable: true}}
 		if err := AppendLAMPResultToCSV(set, r); err != nil {
 			t.Fatal(err)
 		}
@@ -53,9 +54,12 @@ func TestLAMPAveragesUseRawValuesAndCurrentInvocation(t *testing.T) {
 	for name, want := range map[string]string{
 		"run_id": set.runID, "runs": "3", "logk": "2", "matrix_load_time": "9.00 ms",
 		"circuit_prove_time": "1.01 ms", "protocol_setup_time": "1.00 s", "merkle_proof_bytes": "85.67",
-		"setup_peak_heap": "2.00 MiB", "setup_peak_rss": "", "commit_peak_rss": "6.00 MiB", "prove_peak_heap": "",
+		"peak_setup": "", "peak_commit": "4.67 MiB", "peak_prove": "5.33 MiB", "peak": "7.33 MiB",
 		"d_agg_msm_time": "", "q_h_msm_time": "", "verifier_msm_time": "",
 	} {
+		if _, exists := first[name]; !exists {
+			t.Fatalf("missing average column %s", name)
+		}
 		if first[name] != want {
 			t.Errorf("%s=%q, want %q", name, first[name], want)
 		}
