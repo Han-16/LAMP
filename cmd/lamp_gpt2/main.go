@@ -782,11 +782,11 @@ func (p *preparedLayer) commitTensor(t *tensor, rho string) {
 	n := codewordLength(t.cols, rho)
 	encoder := crypto.NewEncoder(t.cols, n)
 	startEncoding := time.Now()
-	_, enc, err := encoder.EncodeRows(t.data)
+	cols, err := encoder.EncodeRowsToColumns(t.data)
 	if err != nil {
 		log.Fatalf("failed to encode tensor %s: %v", t.name, err)
 	}
-	t.colsEnc = matrix.Transpose(enc, t.rows, n)
+	t.colsEnc = cols
 	p.encodingTime += time.Since(startEncoding).Seconds()
 	group := p.extGroups[t.group]
 	startPedersen := time.Now()

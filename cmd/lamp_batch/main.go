@@ -8,7 +8,6 @@ import (
 	"math"
 	"path/filepath"
 	"runtime"
-	"sync"
 	"time"
 
 	"example.com/lamp/benchmark"
@@ -43,10 +42,8 @@ const (
 )
 
 type batchProduct struct {
-	A, B, C            [][]fr.Element
-	ColsEncA, ColsEncB [][]fr.Element
-	ColsEncC           [][]fr.Element
-	VecX, EncX         []fr.Element
+	A, B, C    [][]fr.Element
+	VecX, EncX []fr.Element
 }
 
 func main() {
@@ -229,8 +226,14 @@ func runExperimentWithInput(logK int, rhoStr string, L int, batch int, onlyCompi
 	commitSampler := benchmark.StartMemory()
 	startMatCommit := time.Now()
 	startMatrixEncoding := time.Now()
-	encodeBatchProducts(products, encoder)
-	abcBlocks := buildABCBlocks(products, N, K)
+	matrices := make([][][]fr.Element, 0, 3*len(products))
+	for _, product := range products {
+		matrices = append(matrices, product.A, product.B, product.C)
+	}
+	abcBlocks, err := encoder.EncodeMatrices(matrices)
+	if err != nil {
+		log.Fatalf("❌ Matrix encoding failed: %v", err)
+	}
 	matrixEncodingTime := time.Since(startMatrixEncoding).Seconds()
 	startPedersen := time.Now()
 	leavesABC, blABC := crypto.BatchPedersenCommitBlinded(abcBlocks, ckABC)
@@ -571,52 +574,6 @@ func newLAMPBATCHCircuit(K, N, batch, L int, rootsK, weightsK, rootsN, weightsN 
 		c.EncX[i] = make([]frontend.Variable, N)
 	}
 	return c
-}
-
-func encodeBatchProducts(products []batchProduct, encoder *crypto.Encoder) {
-	var wg sync.WaitGroup
-	errs := make([]error, len(products))
-	for i := range products {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			var err error
-			products[i].ColsEncA, err = encoder.EncodeRowsToColumns(products[i].A)
-			if err != nil {
-				errs[i] = fmt.Errorf("batch item %d A: %w", i, err)
-				return
-			}
-			products[i].ColsEncB, err = encoder.EncodeRowsToColumns(products[i].B)
-			if err != nil {
-				errs[i] = fmt.Errorf("batch item %d B: %w", i, err)
-				return
-			}
-			products[i].ColsEncC, err = encoder.EncodeRowsToColumns(products[i].C)
-			if err != nil {
-				errs[i] = fmt.Errorf("batch item %d C: %w", i, err)
-			}
-		}(i)
-	}
-	wg.Wait()
-	for _, err := range errs {
-		if err != nil {
-			log.Fatalf("❌ Matrix encoding failed: %v", err)
-		}
-	}
-}
-
-func buildABCBlocks(products []batchProduct, N, K int) [][]fr.Element {
-	blocks := make([][]fr.Element, N)
-	for col := 0; col < N; col++ {
-		block := make([]fr.Element, 0, 3*len(products)*K)
-		for i := range products {
-			block = append(block, products[i].ColsEncA[col]...)
-			block = append(block, products[i].ColsEncB[col]...)
-			block = append(block, products[i].ColsEncC[col]...)
-		}
-		blocks[col] = block
-	}
-	return blocks
 }
 
 func buildXYZBlocks(products []batchProduct, encW, encBTest []fr.Element, N int) [][]fr.Element {

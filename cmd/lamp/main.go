@@ -8,7 +8,6 @@ import (
 	"math"
 	"path/filepath"
 	"runtime"
-	"sync"
 	"time"
 
 	"example.com/lamp/benchmark"
@@ -224,46 +223,18 @@ func runExperimentWithInput(logK int, rhoStr string, L int, onlyCompile bool, in
 	commitSampler := benchmark.StartMemory()
 	startMatCommit := time.Now()
 
-	var colsEncA, colsEncB, colsEncC [][]fr.Element
-	var errA, errB, errC error
-	var treeABC [][]fr.Element
-	var rootABC fr.Element
-	var leavesABC []bn254.G1Affine
-	var blABC []fr.Element
-
-	var wg sync.WaitGroup
-	wg.Add(3)
 	startMatrixEncoding := time.Now()
-
-	// Matrix A
-	go func() {
-		defer wg.Done()
-		colsEncA, errA = encoder.EncodeRowsToColumns(matA)
-	}()
-
-	// Matrix B
-	go func() {
-		defer wg.Done()
-		colsEncB, errB = encoder.EncodeRowsToColumns(matB)
-	}()
-
-	// Matrix C
-	go func() {
-		defer wg.Done()
-		colsEncC, errC = encoder.EncodeRowsToColumns(matC)
-	}()
-
-	wg.Wait()
+	abcBlocks, err := encoder.EncodeMatrices([][][]fr.Element{matA, matB, matC})
 	matrixEncodingTime := time.Since(startMatrixEncoding).Seconds()
-	if errA != nil || errB != nil || errC != nil {
-		log.Fatalf("❌ Matrix encoding failed: A=%v B=%v C=%v", errA, errB, errC)
+	if err != nil {
+		log.Fatalf("❌ Matrix encoding failed: %v", err)
 	}
 
 	startPedersen := time.Now()
-	leavesABC, blABC = crypto.BatchPedersenCommitABCBlinded(colsEncA, colsEncB, colsEncC, ckABC)
+	leavesABC, blABC := crypto.BatchPedersenCommitBlinded(abcBlocks, ckABC)
 	pedersenCommitTime := time.Since(startPedersen).Seconds()
 	startMerkleCommit := time.Now()
-	treeABC, rootABC = crypto.BuildMerkleTreeFromGroupElements(leavesABC, depth)
+	treeABC, rootABC := crypto.BuildMerkleTreeFromGroupElements(leavesABC, depth)
 	merkleCommitTime := time.Since(startMerkleCommit).Seconds()
 
 	commitOtherTime := time.Since(startMatCommit).Seconds() - matrixEncodingTime - pedersenCommitTime - merkleCommitTime
@@ -391,10 +362,8 @@ func runExperimentWithInput(logK int, rhoStr string, L int, onlyCompile bool, in
 		assignment.Indices[i] = idx
 		assignment.QueriedEncValues[i] = []frontend.Variable{encX[idx], encYZ[idx], encBTest[idx]}
 		assignment.ColsEncABC[i] = make([]frontend.Variable, 3*K)
-		for j := 0; j < K; j++ {
-			assignment.ColsEncABC[i][j] = colsEncA[idx][j]
-			assignment.ColsEncABC[i][K+j] = colsEncB[idx][j]
-			assignment.ColsEncABC[i][2*K+j] = colsEncC[idx][j]
+		for j, value := range abcBlocks[idx] {
+			assignment.ColsEncABC[i][j] = value
 		}
 	}
 
@@ -468,7 +437,7 @@ func runExperimentWithInput(logK int, rhoStr string, L int, onlyCompile bool, in
 	columnExternalCommitments := make([]bn254.G1Affine, 0, L)
 	columnExternalBlindings := make([]fr.Element, 0, L)
 	for _, idx := range indices {
-		columnBlocks = append(columnBlocks, combineABCColumn(colsEncA[idx], colsEncB[idx], colsEncC[idx], K))
+		columnBlocks = append(columnBlocks, abcBlocks[idx])
 		columnExternalCommitments = append(columnExternalCommitments, leavesABC[idx])
 		columnExternalBlindings = append(columnExternalBlindings, blABC[idx])
 	}
@@ -652,14 +621,6 @@ func selectCommitments(leaves []bn254.G1Affine, indices []int) []bn254.G1Affine 
 	for i, idx := range indices {
 		out[i] = leaves[idx]
 	}
-	return out
-}
-
-func combineABCColumn(a, b, c []fr.Element, blockLen int) []fr.Element {
-	out := make([]fr.Element, 0, 3*blockLen)
-	out = append(out, a...)
-	out = append(out, b...)
-	out = append(out, c...)
 	return out
 }
 

@@ -8,19 +8,29 @@ import (
 	"github.com/consensys/gnark-crypto/utils"
 )
 
-type Encoder struct {
-	domainK *fft.Domain
-	domainN *fft.Domain
-	k, n    int
-}
+type Encoder struct{ *rsCode }
 
 func NewEncoder(k, n int) *Encoder {
-	return &Encoder{
-		domainK: fft.NewDomain(uint64(k)),
-		domainN: fft.NewDomain(uint64(n)),
-		k:       k,
-		n:       n,
+	code, err := newRSCode(k, n)
+	if err != nil {
+		panic(err)
 	}
+	return &Encoder{code}
+}
+
+// EncodeMatrices writes square A/B/C matrices directly into one column layout.
+func (e *Encoder) EncodeMatrices(matrices [][][]fr.Element) ([][]fr.Element, error) {
+	for p, mat := range matrices {
+		if len(mat) != e.K {
+			return nil, fmt.Errorf("matrix %d must have %d rows", p, e.K)
+		}
+		for i, row := range mat {
+			if len(row) != e.K {
+				return nil, fmt.Errorf("matrix %d row %d must have %d columns", p, i, e.K)
+			}
+		}
+	}
+	return e.encodeMatrices(matrices, len(matrices)*e.K), nil
 }
 
 // Encode returns both the message coefficients (size K) and the encoded codeword (size N)
@@ -85,8 +95,8 @@ func PrecomputeBarycentricWeights(roots []fr.Element) []fr.Element {
 }
 
 func (e *Encoder) EncodeMatrix(matrix [][]fr.Element) ([][]fr.Element, [][]fr.Element, error) {
-	if len(matrix) != e.k {
-		return nil, nil, fmt.Errorf("matrix must have exactly K (%d) rows, got %d", e.k, len(matrix))
+	if len(matrix) != e.K {
+		return nil, nil, fmt.Errorf("matrix must have exactly K (%d) rows, got %d", e.K, len(matrix))
 	}
 
 	return e.EncodeRows(matrix)
@@ -110,20 +120,27 @@ func (e *Encoder) EncodeRows(rows [][]fr.Element) ([][]fr.Element, [][]fr.Elemen
 }
 
 func (e *Encoder) EncodeRowsToColumns(rows [][]fr.Element) ([][]fr.Element, error) {
-	cols := make([][]fr.Element, e.n)
-	for col := range cols {
-		cols[col] = make([]fr.Element, len(rows))
-	}
-
-	for rowIndex, row := range rows {
-		_, encRow, err := e.Encode(row)
-		if err != nil {
-			return nil, fmt.Errorf("failed to encode row %d: %w", rowIndex, err)
-		}
-		for col := 0; col < e.n; col++ {
-			cols[col][rowIndex] = encRow[col]
+	for i, row := range rows {
+		if len(row) > e.K {
+			return nil, fmt.Errorf("row %d exceeds code dimension %d", i, e.K)
 		}
 	}
-
+	cols := make([][]fr.Element, e.N)
+	for j := range cols {
+		cols[j] = make([]fr.Element, len(rows))
+	}
+	parallelRanges(len(rows), func(first, last int) {
+		scratch := make([]fr.Element, e.N)
+		option := fft.WithNbTasks(1)
+		for i := first; i < last; i++ {
+			if len(rows[i]) < e.K {
+				clear(scratch[:e.K])
+			}
+			e.encodeInto(rows[i], scratch, option)
+			for j := range cols {
+				cols[j][i] = scratch[j]
+			}
+		}
+	})
 	return cols, nil
 }
