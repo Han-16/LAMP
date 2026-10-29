@@ -67,16 +67,6 @@ and exercises disk-backed padding and block accumulation at K=9, block=4.
 Each generated GPU product also passes an O(K²) CPU check using a fresh random
 field vector before publication; it does not trigger a full CPU matrix product.
 
-```sh
-python3 scripts/test-field.py
-GOCACHE=/tmp/lamp-go-build-cache go test ./matrix ./cmd/matrices
-```
-
-The Python check tests the shared arithmetic on the host. The Go tests exercise
-the helper protocol and disk path with a host C++ reference helper. Actual device
-execution requires the backend self-test; host tests do not validate CUDA/Metal
-compilation or execution on their own.
-
 The generator CSV records the backend, device, dataset path, sampling time,
 computation time, writing time, checking time, and GPU setup/kernel time. Complete
 computation time includes packing, process startup, transfers, synchronization,

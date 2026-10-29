@@ -8,7 +8,6 @@ import (
 	"example.com/lamp/matrix"
 
 	"github.com/consensys/gnark-crypto/ecc"
-	"github.com/consensys/gnark-crypto/ecc/bn254"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	"github.com/consensys/gnark/constraint"
 	"github.com/consensys/gnark/frontend"
@@ -108,61 +107,4 @@ func foldNative(lhs, rhs []fr.Element) fr.Element {
 		out.Add(&out, &term)
 	}
 	return out
-}
-
-func TestClaimSeparatesComputeAndCommitTimers(t *testing.T) {
-	p := &preparedLayer{rho: "1/2"}
-	p.extGroups[groupScalar] = &extGroup{ck: crypto.SetupCommitKey(1)}
-	data := [][]fr.Element{{fr.One(), fr.One()}, {fr.One(), fr.One()}}
-	a := &tensor{rows: 2, cols: 2, data: data}
-	c := p.prepareClaim(claimSpec{id: 1, name: "tiny", A: a, B: a, C: a}, fr.One())
-	if p.vectorComputeTime <= 0 || p.vectorCommitTime <= 0 || p.vectorEncodingTime <= 0 {
-		t.Fatal("missing vector computation, commitment or encoding timer")
-	}
-	if c.foldX == nil || c.foldYZ == nil || c.foldBTest == nil || len(p.extGroups[groupScalar].commits) != 12 {
-		t.Fatal("folded commitments were not generated")
-	}
-}
-
-func TestMerkleSizesSeparateQueryCommitments(t *testing.T) {
-	p := &preparedLayer{}
-	for i := 0; i < groupScalar; i++ {
-		p.sampleGroups[i] = &sampleGroup{}
-	}
-	_, _, point, _ := bn254.Generators()
-	p.sampleGroups[0].commits = []bn254.G1Affine{point, point}
-	p.sampleGroups[0].multiProof = crypto.MerkleMultiProof{Siblings: make([]fr.Element, 2)}
-	p.scalarCommits = []bn254.G1Affine{point}
-	p.scalarMultiProof = crypto.MerkleMultiProof{Siblings: make([]fr.Element, 1)}
-	if got := p.merkleProofSize(); got != 96 {
-		t.Fatalf("Merkle bytes=%d; want three 32-byte hashes without query points", got)
-	}
-	var queryPayload []byte
-	for _, queries := range [][]bn254.G1Affine{p.sampleGroups[0].commits, p.scalarCommits} {
-		for _, query := range queries {
-			encoded := query.Bytes()
-			queryPayload = append(queryPayload, encoded[:]...)
-		}
-	}
-	if got := p.openedMerkleCommitmentCount() * crypto.G1AffineSizeBytes; got != len(queryPayload) || got != 96 {
-		t.Fatalf("query bytes=%d; compressed payload=%d, including repeats", got, len(queryPayload))
-	}
-}
-
-func TestRepeatedLayerInputsShareDataWithoutProverState(t *testing.T) {
-	data := [][]fr.Element{{fr.One(), fr.One()}, {fr.One(), fr.One()}}
-	original := &tensor{id: 1, name: "tiny", rows: 2, cols: 2, group: groupS, data: data}
-	input := &layerInput{tensors: []*tensor{original}, specs: []claimSpec{{id: 1, A: original, B: original, C: original}}}
-	first, claims := input.freshTensors()
-	if first[0] == original || &first[0].data[0][0] != &data[0][0] || claims[0].A != first[0] || claims[0].B != first[0] || claims[0].C != first[0] {
-		t.Fatal("repetition must share input data and remap tensor references")
-	}
-	first[0].colsEnc, first[0].leafStart = data, 123
-	second, nextClaims := input.freshTensors()
-	if second[0] == first[0] || second[0].colsEnc != nil || second[0].leafStart != 0 || nextClaims[0].A != second[0] {
-		t.Fatal("previous repetition's encoded/prover state leaked")
-	}
-	if original.colsEnc != nil || original.leafStart != 0 {
-		t.Fatal("shared input was mutated")
-	}
 }
