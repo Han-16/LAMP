@@ -49,10 +49,11 @@ type FreivaldsBatchResult struct {
 }
 
 type LAMPResult struct {
+	VectorEncodingTime   float64
 	Repeat               int
+	Instances            int // Matrix products; defaults to one for square runs.
 	PedersenCommitTime   float64
 	MerkleCommitTime     float64
-	CommitOtherTime      float64
 	MatrixWorkers        int
 	SetupMemory          Memory
 	CommitMemory         Memory
@@ -89,17 +90,16 @@ type LAMPResult struct {
 	CPLinkProofSize      int
 	QueryCommitmentsSize int
 	TotalProofSize       int
-	PeakMemoryBytes      uint64
 	MatrixSource         string
 	MatrixPath           string
 	MatrixLoadTime       float64
 }
 
 type LAMPBATCHResult struct {
+	VectorEncodingTime   float64
 	Repeat               int
 	PedersenCommitTime   float64
 	MerkleCommitTime     float64
-	CommitOtherTime      float64
 	MatrixWorkers        int
 	SetupMemory          Memory
 	CommitMemory         Memory
@@ -137,19 +137,18 @@ type LAMPBATCHResult struct {
 	CPLinkProofSize      int
 	QueryCommitmentsSize int
 	TotalProofSize       int
-	PeakMemoryBytes      uint64
 	MatrixSource         string
 	MatrixPath           string
 	MatrixLoadTime       float64
 }
 
 type LAMPGPT2Result struct {
+	VectorEncodingTime       float64
 	Repeat                   int
 	MatrixSource, MatrixPath string
 	MatrixLoadTime           float64
 	PedersenCommitTime       float64
 	MerkleCommitTime         float64
-	CommitOtherTime          float64
 	MatrixWorkers            int
 	SetupMemory              Memory
 	CommitMemory             Memory
@@ -188,7 +187,6 @@ type LAMPGPT2Result struct {
 	CPLinkProofSize          int
 	QueryCommitmentsSize     int
 	TotalProofSize           int
-	PeakMemoryBytes          uint64
 }
 
 type FreivaldsGPT2Result struct {

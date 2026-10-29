@@ -25,7 +25,7 @@ func (set *LAMPCSV) addAverage(res LAMPResult, extra []string) {
 	logk, n := set.dimensions(res)
 	key := strings.Join(append([]string{logk, n, res.Rho, strconv.Itoa(res.NumQueries),
 		strconv.Itoa(res.Constraints), res.MatrixSource, res.MatrixPath,
-		strconv.Itoa(res.MatrixWorkers), res.Linker, res.Merkle}, extra...), "\x00")
+		strconv.Itoa(res.MatrixWorkers), res.Linker, res.Merkle, strconv.Itoa(res.Instances)}, extra...), "\x00")
 	g := set.groups[key]
 	if g == nil {
 		g = &lampAverageGroup{first: res, extra: slices.Clone(extra),
@@ -38,8 +38,8 @@ func (set *LAMPCSV) addAverage(res LAMPResult, extra []string) {
 	for i, value := range res.timings() {
 		g.timings[i] += value
 	}
-	for i, value := range res.proofSizes() {
-		g.proofSizes[i] += float64(value)
+	for i, value := range set.proofSizes(res) {
+		g.proofSizes[i] += value
 	}
 	for i, m := range set.memoryPeaks(res) {
 		g.memory[i] += float64(m.RSSBytes)
@@ -51,17 +51,15 @@ func (set *LAMPCSV) averageRecords() [][]string {
 	var rows [][]string
 	for _, g := range set.groupOrder {
 		r := g.first
-		logk, n := set.dimensions(r)
-		row := []string{set.runID, logk, r.Rho, set.samples(r), set.commitMode(), strconv.Itoa(g.runs),
-			strconv.Itoa(r.Constraints), r.MatrixSource, r.MatrixPath, strconv.Itoa(r.MatrixWorkers),
-			formatSeconds(r.MatrixComputeTime), formatSeconds(r.MatrixLoadTime)}
+		logk, _ := set.dimensions(r)
+		row := []string{logk, r.Rho, strconv.Itoa(r.Instances), "-", "-", set.samples(r), set.commitMode(), strconv.Itoa(g.runs), strconv.Itoa(r.Constraints)}
 		count := float64(g.runs)
 		for _, sum := range g.timings {
 			// LED rounds the raw duration mean to nanoseconds before formatting.
 			row = append(row, optionalSeconds(math.Round(sum/count*1e9)/1e9))
 		}
 		for _, sum := range g.proofSizes {
-			row = append(row, strconv.FormatFloat(sum/count, 'f', 2, 64))
+			row = append(row, optionalNumber(sum/count, 2))
 		}
 		for i, sum := range g.memory {
 			cell := ""
@@ -70,8 +68,7 @@ func (set *LAMPCSV) averageRecords() [][]string {
 			}
 			row = append(row, cell)
 		}
-		row = append(row, r.Linker, r.Merkle, n)
-		rows = append(rows, append(row, g.extra...))
+		rows = append(rows, dashMissingCells(row))
 	}
 	return rows
 }
@@ -117,6 +114,12 @@ func (set *LAMPCSV) SaveAverages() (err error) {
 	if err := w.Error(); err != nil {
 		return err
 	}
+	for i, g := range set.groupOrder {
+		if err := set.writeConfig("average", set.averageRows+i+1, g.first, g.extra); err != nil {
+			return err
+		}
+	}
+	set.averageRows += len(set.groupOrder)
 	set.averagesSaved = true
 	fmt.Printf("Averages saved to CSV: %s\n", set.averagePath)
 	return nil

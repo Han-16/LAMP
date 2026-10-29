@@ -184,15 +184,14 @@ func runExperimentWithInput(logK int, rhoStr string, L int, onlyCompile bool, in
 		fmt.Printf("✅ Circuit compiled successfully! Total Constraints: %d\n", nbConstraints)
 
 		return benchmark.LAMPResult{
-			LogK:            logK,
-			Rho:             rhoStr,
-			Linker:          linkerQALink,
-			Merkle:          merkle,
-			N:               N,
-			NumQueries:      L,
-			Constraints:     nbConstraints,
-			MatrixSource:    "compile",
-			PeakMemoryBytes: benchmark.PeakRSSBytes(),
+			LogK:         logK,
+			Rho:          rhoStr,
+			Linker:       linkerQALink,
+			Merkle:       merkle,
+			N:            N,
+			NumQueries:   L,
+			Constraints:  nbConstraints,
+			MatrixSource: "compile",
 		}
 	}
 
@@ -221,7 +220,6 @@ func runExperimentWithInput(logK int, rhoStr string, L int, onlyCompile bool, in
 	// 2. Encode & Commit Matrices A, B, C
 	// =========================================================================
 	commitSampler := benchmark.StartMemory()
-	startMatCommit := time.Now()
 
 	startMatrixEncoding := time.Now()
 	abcBlocks, err := encoder.EncodeMatrices([][][]fr.Element{matA, matB, matC})
@@ -236,8 +234,6 @@ func runExperimentWithInput(logK int, rhoStr string, L int, onlyCompile bool, in
 	startMerkleCommit := time.Now()
 	treeABC, rootABC := crypto.BuildMerkleTreeFromGroupElements(leavesABC, depth)
 	merkleCommitTime := time.Since(startMerkleCommit).Seconds()
-
-	commitOtherTime := time.Since(startMatCommit).Seconds() - matrixEncodingTime - pedersenCommitTime - merkleCommitTime
 	matCommitTime := matrixEncodingTime + pedersenCommitTime + merkleCommitTime
 	commitMemory := commitSampler.Stop()
 
@@ -256,6 +252,7 @@ func runExperimentWithInput(logK int, rhoStr string, L int, onlyCompile bool, in
 	vecYZ := matrix.VecMatMul(vecX, matB, K)
 	vecBTest := matrix.VecMatMul(ChallengeBPowers, matB, K)
 
+	startVectorEncoding := time.Now()
 	_, encX, _ := encoder.Encode(vecX)
 	_, encYZ, _ := encoder.Encode(vecYZ)
 	_, encBTest, err := encoder.Encode(vecBTest)
@@ -263,6 +260,7 @@ func runExperimentWithInput(logK int, rhoStr string, L int, onlyCompile bool, in
 		log.Fatalf("❌ B proximity vector encoding failed: %v", err)
 	}
 
+	vectorEncodingTime := time.Since(startVectorEncoding).Seconds()
 	vectorComputeTime := time.Since(startVecCompute).Seconds()
 	startVecCommit := time.Now()
 	colsXYZ := combineXYZScalars(encX, encYZ, encBTest)
@@ -588,13 +586,13 @@ func runExperimentWithInput(logK int, rhoStr string, L int, onlyCompile bool, in
 		MatrixCommitTime:     matCommitTime,
 		PedersenCommitTime:   pedersenCommitTime,
 		MerkleCommitTime:     merkleCommitTime,
-		CommitOtherTime:      commitOtherTime,
 		MatrixWorkers:        input.Workers,
 		SetupMemory:          setupMemory,
 		CommitMemory:         commitMemory,
 		ProveMemory:          proveMemory,
 		VectorCommitTime:     vecCommitTime,
 		VectorComputeTime:    vectorComputeTime,
+		VectorEncodingTime:   vectorEncodingTime,
 		EncodingTime:         encodingTime,
 		CommitTime:           commitTime,
 		TotalCommitTime:      totalCommitTime,
@@ -612,7 +610,6 @@ func runExperimentWithInput(logK int, rhoStr string, L int, onlyCompile bool, in
 		CPLinkProofSize:      cpLinkProofSize,
 		TotalProofSize:       totalProofSize,
 		QueryCommitmentsSize: queryCommitmentsSize,
-		PeakMemoryBytes:      benchmark.PeakRSSBytes(),
 	}
 }
 

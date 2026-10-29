@@ -172,7 +172,6 @@ type preparedLayer struct {
 	proveMemory        benchmark.Memory
 	pedersenCommitTime float64
 	merkleCommitTime   float64
-	commitOtherTime    float64
 	vectorEncodingTime float64
 	matrixComputeTime  float64
 	setupTime          float64
@@ -286,27 +285,27 @@ func runExperimentWithInput(seqLog int, rho string, L int, onlyCompile bool, inp
 		setupSampler.Stop()
 		fmt.Printf("LAMP GPT-2 circuit compiled. Constraints: %d\n", nbConstraints)
 		return benchmark.LAMPGPT2Result{
-			MatrixSource:      "compile",
-			SeqLog:            seqLog,
-			SeqLen:            seqLen,
-			Rho:               rho,
-			Linker:            linker,
-			Merkle:            merkle,
-			NumQueries:        L,
-			NumClaims:         len(prep.claims),
-			NumCommitGroups:   numGroups,
-			Constraints:       nbConstraints,
-			MatrixComputeTime: prep.matrixComputeTime,
-			SetupTime:         prep.setupTime,
-			ProtocolSetupTime: prep.setupTime,
-			MatrixCommitTime:  prep.matrixCommitTime,
-			VectorComputeTime: prep.vectorComputeTime,
-			VectorCommitTime:  prep.vectorCommitTime,
-			EncodingTime:      prep.encodingTime,
-			CommitTime:        prep.commitTime,
-			TotalCommitTime:   prep.totalCommitTime,
-			MerkleProveTime:   prep.merkleProveTime,
-			PeakMemoryBytes:   benchmark.PeakRSSBytes(),
+			MatrixSource:       "compile",
+			SeqLog:             seqLog,
+			SeqLen:             seqLen,
+			Rho:                rho,
+			Linker:             linker,
+			Merkle:             merkle,
+			NumQueries:         L,
+			NumClaims:          len(prep.claims),
+			NumCommitGroups:    numGroups,
+			Constraints:        nbConstraints,
+			MatrixComputeTime:  prep.matrixComputeTime,
+			SetupTime:          prep.setupTime,
+			ProtocolSetupTime:  prep.setupTime,
+			MatrixCommitTime:   prep.matrixCommitTime,
+			VectorComputeTime:  prep.vectorComputeTime,
+			VectorEncodingTime: prep.vectorEncodingTime,
+			VectorCommitTime:   prep.vectorCommitTime,
+			EncodingTime:       prep.encodingTime,
+			CommitTime:         prep.commitTime,
+			TotalCommitTime:    prep.totalCommitTime,
+			MerkleProveTime:    prep.merkleProveTime,
 		}
 	}
 
@@ -469,12 +468,12 @@ func runExperimentWithInput(seqLog int, rho string, L int, onlyCompile bool, inp
 		MatrixCommitTime:     prep.matrixCommitTime,
 		PedersenCommitTime:   prep.pedersenCommitTime,
 		MerkleCommitTime:     prep.merkleCommitTime,
-		CommitOtherTime:      prep.commitOtherTime,
 		MatrixSource:         "generate",
 		SetupMemory:          prep.setupMemory,
 		CommitMemory:         prep.commitMemory,
 		ProveMemory:          prep.proveMemory,
 		VectorComputeTime:    prep.vectorComputeTime,
+		VectorEncodingTime:   prep.vectorEncodingTime,
 		VectorCommitTime:     prep.vectorCommitTime,
 		EncodingTime:         prep.encodingTime,
 		CommitTime:           prep.commitTime,
@@ -493,7 +492,6 @@ func runExperimentWithInput(seqLog int, rho string, L int, onlyCompile bool, inp
 		CPLinkProofSize:      cpLinkProofSize,
 		TotalProofSize:       totalProofSize,
 		QueryCommitmentsSize: queryCommitmentsSize,
-		PeakMemoryBytes:      benchmark.PeakRSSBytes(),
 	}
 }
 
@@ -544,14 +542,12 @@ func prepareLayer(seqLog int, rho string, L int, input *layerInput) *preparedLay
 	p.matrixComputeTime = input.computeTime
 
 	commitSampler := benchmark.StartMemory()
-	startCommit := time.Now()
 	for _, t := range tensors {
 		p.commitTensor(t, rho)
 	}
 	for i := 0; i < groupScalar; i++ {
 		p.buildGroupTree(i)
 	}
-	p.commitOtherTime = time.Since(startCommit).Seconds() - p.encodingTime - p.pedersenCommitTime - p.merkleCommitTime
 	p.matrixCommitTime = p.encodingTime + p.pedersenCommitTime + p.merkleCommitTime
 	p.commitMemory = commitSampler.Stop()
 	proveSampler := benchmark.StartMemory()

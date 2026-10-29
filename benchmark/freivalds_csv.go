@@ -57,7 +57,7 @@ func freivaldsMetrics(res FreivaldsResult) LAMPResult {
 		ProtocolSetupTime: missing, CPLinkSetupTime: missing,
 		PedersenCommitTime: missing, MerkleCommitTime: missing, MatrixCommitTime: missing,
 		VectorComputeTime: missing, VectorCommitTime: missing, CommitTime: missing,
-		EncodingTime: missing, CommitOtherTime: missing, TotalCommitTime: missing,
+		EncodingTime: missing, VectorEncodingTime: missing, TotalCommitTime: missing,
 		CPLinkProveTime: missing, MerkleProveTime: missing,
 		CPLinkVerifyTime: missing, MerkleVerifyTime: missing,
 	}
@@ -74,21 +74,25 @@ func AppendFreivaldsResultToCSV(set *FreivaldsCSV, res FreivaldsResult) error {
 }
 
 func AppendFreivaldsBatchResultToCSV(set *FreivaldsCSV, res FreivaldsBatchResult) error {
-	return set.append(freivaldsMetrics(FreivaldsResult{
+	metrics := freivaldsMetrics(FreivaldsResult{
 		Repeat: res.Repeat, LogK: res.LogK, Constraints: res.Constraints,
 		MatrixSource: res.MatrixSource, MatrixPath: res.MatrixPath, MatrixWorkers: res.MatrixWorkers,
 		MatrixComputeTime: res.MatrixComputeTime, MatrixLoadTime: res.MatrixLoadTime,
 		SetupTime: res.SetupTime, ProveTime: res.ProveTime, VerifyTime: res.VerifyTime,
 		ProofSize: res.ProofSize, SetupMemory: res.SetupMemory, ProveMemory: res.ProveMemory,
-	}), []string{strconv.Itoa(res.Batch)})
+	})
+	metrics.Instances = res.Batch
+	return set.append(metrics, []string{strconv.Itoa(res.Batch)})
 }
 
 func AppendFreivaldsGPT2ResultToCSV(set *FreivaldsCSV, res FreivaldsGPT2Result) error {
-	return set.append(freivaldsMetrics(FreivaldsResult{
+	metrics := freivaldsMetrics(FreivaldsResult{
 		Repeat: res.Repeat, Constraints: res.Constraints,
 		MatrixSource: res.MatrixSource, MatrixPath: res.MatrixPath, MatrixWorkers: res.MatrixWorkers,
 		MatrixComputeTime: res.MatrixComputeTime, MatrixLoadTime: res.MatrixLoadTime,
 		SetupTime: res.SetupTime, ProveTime: res.ProveTime, VerifyTime: res.VerifyTime,
 		ProofSize: res.ProofSize, SetupMemory: res.SetupMemory, ProveMemory: res.ProveMemory,
-	}), []string{strconv.Itoa(res.SeqLog), strconv.Itoa(res.SeqLen), strconv.Itoa(res.NumClaims)})
+	})
+	metrics.Instances = res.NumClaims
+	return set.append(metrics, []string{strconv.Itoa(res.SeqLog), strconv.Itoa(res.SeqLen), strconv.Itoa(res.NumClaims)})
 }
