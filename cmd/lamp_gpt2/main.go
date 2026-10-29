@@ -78,7 +78,7 @@ type extGroup struct {
 	commits   []bn254.G1Affine
 	blindings []fr.Element
 	metas     []crypto.MerkleLeafMeta
-	tree      [][]fr.Element
+	tree      [][]crypto.Digest
 	root      fr.Element
 	depth     int
 }
@@ -90,7 +90,7 @@ type sampleGroup struct {
 	blindings     []fr.Element
 	metas         []crypto.MerkleLeafMeta
 	leafIndices   []int
-	proofs        [][]fr.Element
+	proofs        [][]crypto.Digest
 	multiProof    crypto.MerkleMultiProof
 	cache         map[string]int
 	merkleProofSz int

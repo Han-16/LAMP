@@ -272,15 +272,6 @@ func deriveQALinkBatchWeights(verifications []QALinkVerification, context []fr.E
 	return weights
 }
 
-func hashG2Point(p bn254.G2Affine) fr.Element {
-	return HashElements(
-		FpToFr(p.X.A0),
-		FpToFr(p.X.A1),
-		FpToFr(p.Y.A0),
-		FpToFr(p.Y.A1),
-	)
-}
-
 func flattenBlocks(blocks [][]fr.Element) []fr.Element {
 	total := 0
 	for i := range blocks {

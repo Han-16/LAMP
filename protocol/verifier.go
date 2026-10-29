@@ -1,6 +1,8 @@
 package protocol
 
 import (
+	"strconv"
+
 	"example.com/lamp/crypto"
 	"github.com/consensys/gnark-crypto/ecc/bn254"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
@@ -18,42 +20,26 @@ func NewVerifier(vk groth16.VerifyingKey, ck1 crypto.CommitKey, ck2 []crypto.Com
 	return &Verifier{VK: vk, CK1: ck1, CK2: ck2}
 }
 
-func (v *Verifier) VerifyMembership(root fr.Element, commitment bn254.G1Affine, proof []fr.Element, idx int, depth int) bool {
-	currHash := crypto.HashPoint(commitment)
-	currIdx := idx
-
-	for level := 0; level < depth; level++ {
-		sibling := proof[level]
-		if currIdx%2 == 0 {
-			currHash = crypto.HashElements(currHash, sibling)
-		} else {
-			currHash = crypto.HashElements(sibling, currHash)
-		}
-		currIdx /= 2
+func (v *Verifier) VerifyMembership(root fr.Element, commitment bn254.G1Affine, proof []crypto.Digest, idx int, depth int) bool {
+	if depth < 0 || depth >= strconv.IntSize-1 {
+		return false
 	}
-	return currHash.Equal(&root)
+	leaf := crypto.MerkleLeafHash(commitment, idx, 1<<depth)
+	return crypto.VerifyMerkleProof(root, leaf, proof, idx, depth)
 }
 
-func (v *Verifier) VerifyMembershipWithMeta(root fr.Element, commitment bn254.G1Affine, meta crypto.MerkleLeafMeta, proof []fr.Element, idx int, depth int) bool {
-	currHash := crypto.HashPointWithMeta(commitment, meta)
-	currIdx := idx
-
-	for level := 0; level < depth; level++ {
-		sibling := proof[level]
-		if currIdx%2 == 0 {
-			currHash = crypto.HashElements(currHash, sibling)
-		} else {
-			currHash = crypto.HashElements(sibling, currHash)
-		}
-		currIdx /= 2
-	}
-	return currHash.Equal(&root)
+func (v *Verifier) VerifyMembershipWithMeta(root fr.Element, commitment bn254.G1Affine, meta crypto.MerkleLeafMeta, proof []crypto.Digest, idx int, depth int) bool {
+	leaf := crypto.HashPointWithMeta(commitment, meta)
+	return crypto.VerifyMerkleProof(root, leaf, proof, idx, depth)
 }
 
 func (v *Verifier) VerifyMultiMembership(root fr.Element, commitments []bn254.G1Affine, indices []int, proof crypto.MerkleMultiProof, depth int) bool {
-	leafHashes := make([]fr.Element, len(commitments))
+	if len(commitments) != len(indices) || depth < 0 || depth >= strconv.IntSize-1 {
+		return false
+	}
+	leafHashes := make([]crypto.Digest, len(commitments))
 	for i := range commitments {
-		leafHashes[i] = crypto.HashPoint(commitments[i])
+		leafHashes[i] = crypto.MerkleLeafHash(commitments[i], indices[i], 1<<depth)
 	}
 	return crypto.VerifyMerkleMultiProof(root, leafHashes, indices, proof, depth)
 }
@@ -62,7 +48,7 @@ func (v *Verifier) VerifyMultiMembershipWithMeta(root fr.Element, commitments []
 	if len(commitments) != len(metas) {
 		return false
 	}
-	leafHashes := make([]fr.Element, len(commitments))
+	leafHashes := make([]crypto.Digest, len(commitments))
 	for i := range commitments {
 		leafHashes[i] = crypto.HashPointWithMeta(commitments[i], metas[i])
 	}

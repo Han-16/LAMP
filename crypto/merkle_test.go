@@ -13,9 +13,9 @@ func TestMerkleMultiProofRoundTrip(t *testing.T) {
 	indices := []int{1, 2, 3, 9, 14}
 	proof := GetMerkleMultiProof(tree, indices, 4)
 
-	leafHashes := make([]fr.Element, len(indices))
+	leafHashes := make([]Digest, len(indices))
 	for i, idx := range indices {
-		leafHashes[i] = HashPoint(leaves[idx])
+		leafHashes[i] = MerkleLeafHash(leaves[idx], idx, len(leaves))
 	}
 
 	if !VerifyMerkleMultiProof(root, leafHashes, indices, proof, 4) {
@@ -38,7 +38,7 @@ func TestMerkleMultiProofWithMetaRejectsTamperedLeaf(t *testing.T) {
 	indices := []int{0, 4, 8}
 	proof := GetMerkleMultiProof(tree, indices, depth)
 
-	leafHashes := make([]fr.Element, len(indices))
+	leafHashes := make([]Digest, len(indices))
 	for i, idx := range indices {
 		leafHashes[i] = HashPointWithMeta(leaves[idx], metas[idx])
 	}
@@ -62,4 +62,41 @@ func randomCommitments(count int) []bn254.G1Affine {
 		out[i] = PedersenCommitBlinded([]fr.Element{value}, blinding, ck)
 	}
 	return out
+}
+
+func TestSHA256MerklePathsAndMalformedProofs(t *testing.T) {
+	leaves := randomCommitments(8)
+	tree, root := BuildMerkleTreeFromGroupElements(leaves, 3)
+	for i := range leaves {
+		leaf := MerkleLeafHash(leaves[i], i, len(leaves))
+		path := GetMerkleProof(tree, i, 3)
+		if !VerifyMerkleProof(root, leaf, path, i, 3) {
+			t.Fatalf("path %d", i)
+		}
+		path[0][0] ^= 1
+		if VerifyMerkleProof(root, leaf, path, i, 3) {
+			t.Fatal("tampered sibling accepted")
+		}
+	}
+	indices := []int{5, 1, 5}
+	hashes := []Digest{tree[0][5], tree[0][1], tree[0][5]}
+	proof := GetMerkleMultiProof(tree, indices, 3)
+	if !VerifyMerkleMultiProof(root, hashes, indices, proof, 3) {
+		t.Fatal("repeated query rejected")
+	}
+	for name, bad := range map[string]MerkleMultiProof{
+		"truncated": {Siblings: proof.Siblings[:len(proof.Siblings)-1]},
+		"extra":     {Siblings: append(append([]Digest(nil), proof.Siblings...), Digest{})},
+	} {
+		if VerifyMerkleMultiProof(root, hashes, indices, bad, 3) {
+			t.Fatal(name)
+		}
+	}
+	hashes[2][0] ^= 1
+	if VerifyMerkleMultiProof(root, hashes, indices, proof, 3) {
+		t.Fatal("conflicting duplicate accepted")
+	}
+	if VerifyMerkleMultiProof(root, hashes, indices, proof, -1) {
+		t.Fatal("invalid depth accepted")
+	}
 }

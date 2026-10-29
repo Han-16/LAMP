@@ -47,7 +47,7 @@ func NewProver(pk groth16.ProvingKey, ck1 crypto.CommitKey, encoder *crypto.Enco
 	return &Prover{PK: pk, CK1: ck1, CK2: ck2, Encoder: encoder}
 }
 
-func (p *Prover) CommitMatrixBlinded(matrix [][]fr.Element, depth int) ([][]fr.Element, fr.Element, []bn254.G1Affine, []fr.Element) {
+func (p *Prover) CommitMatrixBlinded(matrix [][]fr.Element, depth int) ([][]crypto.Digest, fr.Element, []bn254.G1Affine, []fr.Element) {
 	cm, blindings := crypto.BatchPedersenCommitBlinded(matrix, p.CK1)
 
 	tree, root := crypto.BuildMerkleTreeFromGroupElements(cm, depth)
@@ -55,7 +55,7 @@ func (p *Prover) CommitMatrixBlinded(matrix [][]fr.Element, depth int) ([][]fr.E
 	return tree, root, cm, blindings
 }
 
-func (p *Prover) CommitMatrixBlindedWithKey(matrix [][]fr.Element, depth int, ck crypto.CommitKey) ([][]fr.Element, fr.Element, []bn254.G1Affine, []fr.Element) {
+func (p *Prover) CommitMatrixBlindedWithKey(matrix [][]fr.Element, depth int, ck crypto.CommitKey) ([][]crypto.Digest, fr.Element, []bn254.G1Affine, []fr.Element) {
 	cm, blindings := crypto.BatchPedersenCommitBlinded(matrix, ck)
 
 	tree, root := crypto.BuildMerkleTreeFromGroupElements(cm, depth)
@@ -63,7 +63,7 @@ func (p *Prover) CommitMatrixBlindedWithKey(matrix [][]fr.Element, depth int, ck
 	return tree, root, cm, blindings
 }
 
-func (p *Prover) CommitScalarsBlinded(scalars []fr.Element, depth int, ckScalar crypto.CommitKey) ([][]fr.Element, fr.Element, []bn254.G1Affine, []fr.Element) {
+func (p *Prover) CommitScalarsBlinded(scalars []fr.Element, depth int, ckScalar crypto.CommitKey) ([][]crypto.Digest, fr.Element, []bn254.G1Affine, []fr.Element) {
 	matrix := make([][]fr.Element, len(scalars))
 	for i, s := range scalars {
 		matrix[i] = []fr.Element{s}
@@ -76,7 +76,7 @@ func (p *Prover) CommitScalarsBlinded(scalars []fr.Element, depth int, ckScalar 
 	return tree, root, cm, blindings
 }
 
-func (p *Prover) GenerateMembershipProof(tree [][]fr.Element, idx, depth int) []fr.Element {
+func (p *Prover) GenerateMembershipProof(tree [][]crypto.Digest, idx, depth int) []crypto.Digest {
 	return crypto.GetMerkleProof(tree, idx, depth)
 }
 
